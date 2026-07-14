@@ -14,3 +14,11 @@ def test_readme_documents_security_semantics_and_commands() -> None:
         "read-only",
     ):
         assert required in text
+
+
+def test_readme_badges_target_the_repository_owner() -> None:
+    text = Path("README.md").read_text(encoding="utf-8")
+
+    assert "https://github.com/Rule-0-Softworks/rule-0-pr-command-center" in text
+    assert "https://codecov.io/gh/Rule-0-Softworks/rule-0-pr-command-center" in text
+    assert "Rule0Softworks/rule-0-pr-command-center" not in text
