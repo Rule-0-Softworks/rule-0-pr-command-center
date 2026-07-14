@@ -82,9 +82,7 @@ def extract_effective_requirements(
         fallback = _extract_branch_protection(branch_protection)
         if not fallback.available:
             return fallback
-        checks.update(
-            {(item.context, item.integration_id): item for item in fallback.checks}
-        )
+        checks.update({(item.context, item.integration_id): item for item in fallback.checks})
     return EffectiveRequirements(
         tuple(checks.values()),
         merge_queue,
