@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 
 
 class CheckState(StrEnum):
@@ -38,6 +39,9 @@ class CheckContext:
     url: str | None
     app_database_id: int | None
     raw: Mapping[str, object] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "raw", MappingProxyType(dict(self.raw)))
 
 
 @dataclass(frozen=True)
