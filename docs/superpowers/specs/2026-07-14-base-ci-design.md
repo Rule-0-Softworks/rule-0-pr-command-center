@@ -70,12 +70,13 @@ execution and Codecov upload require the subsequent pull request on GitHub.
 
 ## Bootstrap Behavior
 
-The current main branch has no Python project. The CI and CodeQL workflows will
-first check out the repository and emit a project-present output. Their quality
-and analysis jobs will depend on that output and run only when the required
-project files exist. This permits the CI-only branch to merge first without a
-failing run; after main is merged into the application feature branch, the full
-checks and Codecov upload run on that branch's pull request.
+The current main branch has no Python project. The CI, CodeQL, and Release
+Please workflows will first check out the repository and emit a project-present
+output. Their quality, analysis, and release jobs will depend on that output
+and run only when the required project files exist. This permits the CI-only
+branch to merge first without a failing run; after main is merged into the
+application feature branch, the full checks, Codecov upload, and release PR
+automation become active.
 
 Local application commands cannot run from this bootstrap branch. Verification
 will inspect the exact YAML files, validate the pinned action SHAs, and run
