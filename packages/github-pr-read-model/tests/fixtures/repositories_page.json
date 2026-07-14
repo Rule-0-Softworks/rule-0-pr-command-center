@@ -1,0 +1,11 @@
+{
+  "organization": {
+    "repositories": {
+      "pageInfo": {"hasNextPage": false, "endCursor": null},
+      "nodes": [
+        {"nameWithOwner": "Rule-0-Softworks/example", "isArchived": false},
+        {"nameWithOwner": "Rule-0-Softworks/denied", "isArchived": false}
+      ]
+    }
+  }
+}

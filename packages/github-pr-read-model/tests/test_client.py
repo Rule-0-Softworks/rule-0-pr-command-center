@@ -1,0 +1,54 @@
+import io
+import urllib.error
+from email.message import Message
+from types import TracebackType
+from urllib.request import Request
+
+import pytest
+from r0s_pr_read_model.client import GitHubClient, GitHubError
+
+
+class Response(io.BytesIO):
+    def __enter__(self) -> "Response":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+
+def test_graphql_sends_auth_without_returning_token() -> None:
+    seen: dict[str, str] = {}
+
+    def opener(request: Request, timeout: float) -> Response:
+        seen["authorization"] = request.headers["Authorization"]
+        return Response(b'{"data":{"organization":{"login":"Rule-0-Softworks"}}}')
+
+    result = GitHubClient("secret-value", opener=opener).graphql("query { viewer { login } }", {})
+    assert result["organization"]["login"] == "Rule-0-Softworks"
+    assert seen["authorization"] == "Bearer secret-value"
+    assert "secret-value" not in repr(result)
+
+
+def test_http_error_never_contains_token() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        raise urllib.error.HTTPError(
+            request.full_url, 403, "Forbidden", Message(), io.BytesIO(b"denied")
+        )
+
+    with pytest.raises(GitHubError) as raised:
+        GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+    assert "secret-value" not in str(raised.value)
+
+
+def test_graphql_error_never_contains_token() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(b'{"errors":[{"message":"secret-value was rejected"}]}')
+
+    with pytest.raises(GitHubError) as raised:
+        GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+    assert "secret-value" not in str(raised.value)

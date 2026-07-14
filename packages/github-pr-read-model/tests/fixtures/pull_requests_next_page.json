@@ -1,0 +1,23 @@
+{
+  "data": {
+    "repository": {
+      "pullRequests": {
+        "pageInfo": {"hasNextPage": false, "endCursor": null},
+        "nodes": [{
+          "number": 8,
+          "title": "Synthetic second-page PR",
+          "url": "https://github.com/Rule-0-Softworks/example/pull/8",
+          "isDraft": false,
+          "author": {"login": "developer"},
+          "baseRefName": "main",
+          "headRefName": "feature/second-page",
+          "headRefOid": "1111111111111111",
+          "reviewDecision": "APPROVED",
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "CLEAN",
+          "commits": {"nodes": [{"commit": {"oid": "1111111111111111", "statusCheckRollup": null}}]}
+        }]
+      }
+    }
+  }
+}
