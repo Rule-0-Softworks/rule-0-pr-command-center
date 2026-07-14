@@ -18,13 +18,7 @@ class ScriptedClient:
     def graphql(self, query, variables):
         self.graphql_calls.append((query, variables))
         if "query BranchProtection" in query:
-            return {
-                "repository": {
-                    "ref": {
-                        "branchProtectionRule": self.branch_protection
-                    }
-                }
-            }
+            return {"repository": {"ref": {"branchProtectionRule": self.branch_protection}}}
         response = next(self.responses)
         if isinstance(response, Exception):
             raise response

@@ -126,9 +126,7 @@ def _requirements_for_branch(
                 f"/repos/{owner}/{name}/rules/branches/{quote(branch, safe='')}"
                 f"?per_page=100&page={page}"
             )
-            rules = client.rest_json(
-                rules_path
-            )
+            rules = client.rest_json(rules_path)
             if not isinstance(rules, list):
                 effective_rules = rules
                 break
