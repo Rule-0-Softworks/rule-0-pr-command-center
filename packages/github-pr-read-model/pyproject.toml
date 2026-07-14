@@ -1,0 +1,10 @@
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "r0s-pr-read-model"
+version = "0.0.0"
+description = "Read model for GitHub pull requests."
+requires-python = ">=3.12"
+authors = [{ name = "Rule-0-Softworks" }]
