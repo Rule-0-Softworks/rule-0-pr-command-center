@@ -8,8 +8,10 @@ status badges.
 
 ## Scope
 
-- Add a CI workflow for pull requests and pushes to `main`.
-- Add a separate CodeQL workflow for Python, including a weekly scheduled scan.
+- Add a CI workflow for pull requests targeting `dev` or `main`, plus pushes to
+  those branches.
+- Add a separate CodeQL workflow for Python, including a monthly scheduled scan
+  on the first day of the month.
 - Add weekly Dependabot updates for GitHub Actions and Python dependencies.
 - Add Release Please to create or update release pull requests from Conventional
   Commits; it will not publish releases automatically.
@@ -22,16 +24,18 @@ status badges.
 
 ## Workflow Design
 
-`ci.yml` will run on Ubuntu for pushes and pull requests targeting `main`. It
-will install the locked Python 3.12 environment through UV, validate `uv.lock`,
-run Ruff linting and formatting checks, run Ty, then run Pytest with
-`pytest-cov` to produce `coverage.xml`. Codecov uploads that file using
+`ci.yml` will run on Ubuntu for pushes to `dev` and `main`, and pull requests
+targeting either branch. It will install the locked Python 3.12 environment
+through UV, validate `uv.lock`, run Ruff linting and formatting checks, run Ty,
+then run Pytest with `pytest-cov` to produce `coverage.xml`. Codecov uploads
+that file using
 `${{ secrets.CODECOV_TOKEN }}` and fails the job when the upload cannot be
 completed.
 
 `codeql.yml` will use GitHub's advanced setup for Python on pushes and pull
-requests targeting `main`, plus a weekly scheduled run. It will grant only the
-permissions required to read repository contents and upload security events.
+requests targeting `main`, plus a UTC monthly scheduled run at `06:00` on the
+first day of the month (`0 6 1 * *`). It will grant only the permissions
+required to read repository contents and upload security events.
 
 `release-please.yml` will run only on pushes to `main`, with pull-request and
 contents write permissions, to maintain a release PR based on the repository's
@@ -50,8 +54,10 @@ their major version recorded in an adjacent comment:
 - `github/codeql-action@1ad29ea4a422cce9a242a9fae469541dcd08addc` (`v4`)
 - `googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5` (`v4`)
 
-Dependabot will be allowed to propose action updates, but pull requests must
-preserve full-SHA pinning.
+Dependabot will check GitHub Actions and Python/UV dependencies weekly. Its
+GitHub Actions configuration will group `github/codeql-action/*` updates into a
+single `codeql-actions` pull request, preventing `init` and `analyze` from
+moving independently. Pull requests must preserve full-SHA pinning.
 
 ## Testing and Failure Handling
 
