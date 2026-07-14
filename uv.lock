@@ -275,7 +275,7 @@ wheels = [
 
 [[package]]
 name = "r0s-pr-command-center"
-version = "0.0.0"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -308,7 +308,7 @@ dev = [
 
 [[package]]
 name = "r0s-pr-read-model"
-version = "0.0.0"
+version = "0.1.0"
 source = { editable = "packages/github-pr-read-model" }
 
 [[package]]

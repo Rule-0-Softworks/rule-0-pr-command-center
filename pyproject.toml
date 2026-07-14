@@ -4,11 +4,9 @@ build-backend = "uv_build"
 
 [project]
 name = "r0s-pr-command-center"
-version = "0.0.0"
-description = "Read-only GitHub pull request command center for Rule-0-Softworks."
-readme = "README.md"
+version = "0.1.0"
+description = "Read-only command center for Rule-0-Softworks pull requests"
 requires-python = ">=3.12"
-authors = [{ name = "Rule-0-Softworks" }]
 dependencies = [
   "fastapi>=0.116,<1",
   "r0s-pr-read-model",
@@ -16,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-serve = "uvicorn.main:main"
+serve = "r0s_pr_command_center.app:run"
 
 [dependency-groups]
 dev = [
@@ -33,7 +31,8 @@ r0s-pr-read-model = { workspace = true }
 members = ["packages/github-pr-read-model"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/github-pr-read-model/tests"]
+addopts = "-ra --strict-config --strict-markers"
 
 [tool.ruff]
 line-length = 100
@@ -44,4 +43,4 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ty.environment]
 python-version = "3.12"
-root = ["src", "packages/github-pr-read-model/src"]
+root = ["./src", "./packages/github-pr-read-model/src"]
