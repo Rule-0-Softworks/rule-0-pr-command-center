@@ -34,3 +34,19 @@ def test_pr_detail_labels_all_and_required_checks_separately(snapshot_factory) -
     assert "All checks" in html
     assert "Required checks" in html
     assert html.index("All checks") < html.index("Required checks")
+
+
+def test_dashboard_includes_post_refresh_control(snapshot_factory) -> None:
+    html = render_dashboard(snapshot_factory(), DashboardFilter())
+
+    assert "<form method='post' action='/refresh'>" in html
+    assert "Refresh snapshot" in html
+
+
+def test_pr_detail_shows_head_sha(snapshot_factory) -> None:
+    pr = snapshot_factory().pull_requests[0]
+
+    html = render_pr_detail(pr)
+
+    assert "Head SHA" in html
+    assert pr.head_sha in html

@@ -5,20 +5,23 @@ from r0s_pr_read_model.collect import collect_snapshot
 
 
 class ScriptedClient:
-    def __init__(self, responses, rest_responses=()):
+    def __init__(self, responses, rest_responses=(), branch_protection=None):
         self.responses = iter(responses)
         self.rest_responses = iter(rest_responses)
         self.rest_paths = []
+        self.graphql_calls = []
+        self.branch_protection = branch_protection or {
+            "requiresStatusChecks": False,
+            "requiredStatusChecks": [],
+        }
 
     def graphql(self, query, variables):
+        self.graphql_calls.append((query, variables))
         if "query BranchProtection" in query:
             return {
                 "repository": {
                     "ref": {
-                        "branchProtectionRule": {
-                            "requiresStatusChecks": False,
-                            "requiredStatusChecks": [],
-                        }
+                        "branchProtectionRule": self.branch_protection
                     }
                 }
             }
@@ -147,8 +150,65 @@ def test_collection_reconciles_cached_base_branch_requirements(fixtures) -> None
 
     snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
 
+    assert snapshot.pull_requests[0].required_check_state == "unknown"
+    assert client.rest_paths == [
+        "/repos/Rule-0-Softworks/example/rules/branches/main?per_page=100&page=1"
+    ]
+
+
+def test_collection_reads_all_effective_rule_pages(fixtures) -> None:
+    from copy import deepcopy
+
+    repositories = deepcopy(fixtures["repositories_page"])
+    repositories["organization"]["repositories"]["nodes"] = repositories["organization"][
+        "repositories"
+    ]["nodes"][:1]
+    ignored_rules = [{"type": "pull_request"} for _ in range(100)]
+    required_rule = {
+        "type": "required_status_checks",
+        "parameters": {"required_status_checks": [{"context": "Quality Gate"}]},
+    }
+    client = ScriptedClient(
+        [repositories, fixtures["pull_requests_page"]],
+        [ignored_rules, [required_rule]],
+    )
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
+
     assert snapshot.pull_requests[0].required_check_state == "failing"
-    assert client.rest_paths == ["/repos/Rule-0-Softworks/example/rules/branches/main"]
+    assert client.rest_paths[-1].endswith("?per_page=100&page=2")
+
+
+def test_collection_unions_ruleset_and_branch_protection_checks(fixtures) -> None:
+    from copy import deepcopy
+
+    repositories = deepcopy(fixtures["repositories_page"])
+    repositories["organization"]["repositories"]["nodes"] = repositories["organization"][
+        "repositories"
+    ]["nodes"][:1]
+    pull_requests = deepcopy(fixtures["pull_requests_page"])
+    commit = pull_requests["data"]["repository"]["pullRequests"]["nodes"][0]["commits"]["nodes"][0][
+        "commit"
+    ]
+    contexts = commit["statusCheckRollup"]["contexts"]["nodes"]
+    contexts[0]["conclusion"] = "SUCCESS"
+    contexts[1]["conclusion"] = "FAILURE"
+    effective_rules = [
+        rule for rule in fixtures["effective_rules"] if rule["type"] != "merge_queue"
+    ]
+    client = ScriptedClient(
+        [repositories, pull_requests],
+        [effective_rules],
+        {
+            "requiresStatusChecks": True,
+            "requiredStatusChecks": [{"context": "legacy-ci", "app": None}],
+        },
+    )
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
+
+    assert snapshot.pull_requests[0].required_check_state == "failing"
+    assert any("query BranchProtection" in query for query, _ in client.graphql_calls)
 
 
 def test_context_page_error_cannot_claim_required_checks_passing(fixtures) -> None:

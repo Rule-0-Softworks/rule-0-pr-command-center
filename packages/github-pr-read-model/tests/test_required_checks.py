@@ -54,6 +54,24 @@ def test_malformed_rules_emit_required_rules_source_error(fixtures) -> None:
     assert source_error.stage == "required_rules"
 
 
+def test_merge_queue_rules_do_not_report_pr_head_checks_as_passing(fixtures) -> None:
+    from copy import deepcopy
+
+    raw = deepcopy(fixtures["pull_requests_page"]["data"]["repository"]["pullRequests"]["nodes"][0])
+    raw["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"][0][
+        "conclusion"
+    ] = "SUCCESS"
+    pr = normalize_pull_request("Rule-0-Softworks/example", raw)
+    requirements = extract_effective_requirements(fixtures["effective_rules"], None)
+
+    updated, _ = apply_required_requirements(pr, requirements)
+
+    assert updated.required_check_state is RequiredCheckState.UNKNOWN
+    assert any(
+        diagnostic.code == "required.merge_queue_pending" for diagnostic in updated.diagnostics
+    )
+
+
 @pytest.mark.parametrize(
     ("case", "expected"),
     [

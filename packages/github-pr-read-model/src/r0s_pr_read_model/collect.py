@@ -119,14 +119,25 @@ def _requirements_for_branch(
     branch: str,
 ) -> EffectiveRequirements:
     try:
-        effective_rules = client.rest_json(
-            f"/repos/{owner}/{name}/rules/branches/{quote(branch, safe='')}"
-        )
+        effective_rules: object = []
+        page = 1
+        while True:
+            rules_path = (
+                f"/repos/{owner}/{name}/rules/branches/{quote(branch, safe='')}"
+                f"?per_page=100&page={page}"
+            )
+            rules = client.rest_json(
+                rules_path
+            )
+            if not isinstance(rules, list):
+                effective_rules = rules
+                break
+            effective_rules.extend(rules)
+            if len(rules) < 100:
+                break
+            page += 1
     except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
         return _unavailable_requirements(error)
-    requirements = extract_effective_requirements(effective_rules, None)
-    if not requirements.available or requirements.checks:
-        return requirements
     try:
         data = client.graphql(
             BRANCH_PROTECTION,

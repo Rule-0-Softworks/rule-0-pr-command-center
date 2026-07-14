@@ -78,7 +78,7 @@ def extract_effective_requirements(
                     )
                 required = RequiredCheck(context, integration_id, "effective_rules")
                 checks[(required.context, required.integration_id)] = required
-    if not checks and branch_protection is not None:
+    if branch_protection is not None:
         fallback = _extract_branch_protection(branch_protection)
         if not fallback.available:
             return fallback
@@ -165,6 +165,14 @@ def classify_required_checks(
 ) -> tuple[RequiredCheckState, tuple[Diagnostic, ...]]:
     if not requirements.available:
         return RequiredCheckState.UNKNOWN, (requirements.diagnostic,)
+    if requirements.merge_queue_required:
+        return RequiredCheckState.UNKNOWN, (
+            Diagnostic(
+                "required.merge_queue_pending",
+                "merge queue checks must run on the merge-group commit",
+                "reconciliation",
+            ),
+        )
     if not requirements.checks:
         return RequiredCheckState.NOT_CONFIGURED, (
             Diagnostic("required.none", "no required status checks apply", "rules"),
