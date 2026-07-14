@@ -68,10 +68,24 @@ the minimal configuration is added. Local verification will run the current
 README commands and the configuration-contract tests. GitHub-hosted workflow
 execution and Codecov upload require the subsequent pull request on GitHub.
 
+## Bootstrap Behavior
+
+The current main branch has no Python project. The CI and CodeQL workflows will
+first check out the repository and emit a project-present output. Their quality
+and analysis jobs will depend on that output and run only when the required
+project files exist. This permits the CI-only branch to merge first without a
+failing run; after main is merged into the application feature branch, the full
+checks and Codecov upload run on that branch's pull request.
+
+Local application commands cannot run from this bootstrap branch. Verification
+will inspect the exact YAML files, validate the pinned action SHAs, and run
+git diff --check.
+
 ## Non-Goals
 
 - No automatic package publication, deployment, release artifact generation,
   or GitHub release creation.
 - No branch-protection changes or GitHub organization setting changes.
-- No production dependency changes; `pytest-cov` is a development-only
-  dependency needed to create the requested coverage report.
+- No application dependency changes; CI installs `pytest-cov` transiently
+  through UV to create the requested coverage report while leaving the future
+  project lockfile unchanged.
