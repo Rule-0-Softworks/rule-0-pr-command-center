@@ -15,7 +15,7 @@ def fixtures() -> dict[str, object]:
 def required_case():
     def make(case: str):
         from r0s_pr_read_model.models import CheckContext, Diagnostic, RequiredCheck
-        from r0s_pr_read_model.required_checks import (  # ty: ignore[unresolved-import]
+        from r0s_pr_read_model.required_checks import (
             EffectiveRequirements,
         )
 

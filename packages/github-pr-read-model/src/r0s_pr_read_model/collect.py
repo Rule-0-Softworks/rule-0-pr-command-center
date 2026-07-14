@@ -3,14 +3,29 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, Protocol
+from urllib.parse import quote
 
-from .models import CheckState, DashboardSnapshot, Diagnostic, PullRequest, SourceError
+from .models import (
+    CheckState,
+    DashboardSnapshot,
+    Diagnostic,
+    PullRequest,
+    RequiredCheckState,
+    SourceError,
+)
 from .normalize import normalize_pull_request
-from .queries import MORE_CONTEXTS, PULL_REQUESTS, REPOSITORIES
+from .queries import BRANCH_PROTECTION, MORE_CONTEXTS, PULL_REQUESTS, REPOSITORIES
+from .required_checks import (
+    EffectiveRequirements,
+    apply_required_requirements,
+    extract_effective_requirements,
+)
 
 
 class GitHubReadClient(Protocol):
     def graphql(self, query: str, variables: dict[str, object]) -> dict[str, Any]: ...
+
+    def rest_json(self, path: str) -> object: ...
 
 
 def _connection(value: dict[str, Any]) -> tuple[list[dict[str, Any]], bool, str | None]:
@@ -78,12 +93,54 @@ def _mark_incomplete(pr: PullRequest, error: Exception) -> PullRequest:
     )
 
 
+def _requirements_for_branch(
+    client: GitHubReadClient,
+    owner: str,
+    name: str,
+    branch: str,
+) -> EffectiveRequirements:
+    try:
+        effective_rules = client.rest_json(
+            f"/repos/{owner}/{name}/rules/branches/{quote(branch, safe='')}"
+        )
+    except (KeyError, TypeError, ValueError, RuntimeError):
+        return extract_effective_requirements(None, None)
+    requirements = extract_effective_requirements(effective_rules, None)
+    if not requirements.available or requirements.checks:
+        return requirements
+    try:
+        data = client.graphql(
+            BRANCH_PROTECTION,
+            {"owner": owner, "name": name, "qualifiedName": f"refs/heads/{branch}"},
+        )
+        branch_protection = data["repository"]["ref"]["branchProtectionRule"]
+    except (KeyError, TypeError, ValueError, RuntimeError):
+        return extract_effective_requirements(None, None)
+    return extract_effective_requirements(effective_rules, branch_protection)
+
+
+def _mark_required_contexts_incomplete(pr: PullRequest) -> PullRequest:
+    return replace(
+        pr,
+        required_check_state=RequiredCheckState.UNKNOWN,
+        diagnostics=(
+            *pr.diagnostics,
+            Diagnostic(
+                "required.contexts_incomplete",
+                "required checks cannot be reconciled because context retrieval was incomplete",
+                "contexts",
+            ),
+        ),
+    )
+
+
 def collect_repository_prs(
     client: GitHubReadClient, repository: str
 ) -> tuple[list[PullRequest], list[SourceError]]:
     owner, name = repository.split("/", 1)
     pull_requests: list[PullRequest] = []
     errors: list[SourceError] = []
+    requirements_by_branch: dict[str, EffectiveRequirements] = {}
     cursor: str | None = None
     while True:
         try:
@@ -96,6 +153,7 @@ def collect_repository_prs(
             errors.append(SourceError(repository, "pull_requests", _message(error)))
             break
         for raw_pr in nodes:
+            contexts_complete = True
             try:
                 commit = raw_pr["commits"]["nodes"][-1]["commit"]
                 rollup = commit.get("statusCheckRollup")
@@ -103,13 +161,24 @@ def collect_repository_prs(
                 if page.get("hasNextPage"):
                     contexts = collect_remaining_contexts(client, repository, raw_pr)
                     _replace_contexts(raw_pr, contexts)
-                pull_requests.append(normalize_pull_request(repository, raw_pr))
+                pr = normalize_pull_request(repository, raw_pr)
             except (KeyError, TypeError, ValueError, RuntimeError) as error:
                 normalized = normalize_pull_request(repository, raw_pr)
-                pull_requests.append(_mark_incomplete(normalized, error))
+                pr = _mark_incomplete(normalized, error)
+                contexts_complete = False
                 errors.append(
                     SourceError(repository, f"contexts:#{raw_pr['number']}", _message(error))
                 )
+            requirements = requirements_by_branch.get(pr.base_ref_name)
+            if requirements is None:
+                requirements = _requirements_for_branch(client, owner, name, pr.base_ref_name)
+                requirements_by_branch[pr.base_ref_name] = requirements
+            pr, source_error = apply_required_requirements(pr, requirements)
+            if not contexts_complete:
+                pr = _mark_required_contexts_incomplete(pr)
+            pull_requests.append(pr)
+            if source_error is not None:
+                errors.append(source_error)
         if not has_next:
             break
     return pull_requests, errors

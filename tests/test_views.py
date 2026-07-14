@@ -1,4 +1,10 @@
-from r0s_pr_command_center.views import DashboardFilter, count_facets, filter_prs, render_dashboard
+from r0s_pr_command_center.views import (
+    DashboardFilter,
+    count_facets,
+    filter_prs,
+    render_dashboard,
+    render_pr_detail,
+)
 
 
 def test_filters_and_counts_use_the_same_snapshot(snapshot_factory) -> None:
@@ -18,3 +24,13 @@ def test_dashboard_escapes_titles_and_exposes_expandable_diagnostics(snapshot_fa
     assert "&lt;script&gt;" in html
     assert "<details" in html
     assert "Completeness warning" in html
+
+
+def test_pr_detail_labels_all_and_required_checks_separately(snapshot_factory) -> None:
+    pr = snapshot_factory().pull_requests[0]
+
+    html = render_pr_detail(pr)
+
+    assert "All checks" in html
+    assert "Required checks" in html
+    assert html.index("All checks") < html.index("Required checks")

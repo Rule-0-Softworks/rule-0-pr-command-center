@@ -4,17 +4,31 @@ from r0s_pr_read_model.collect import collect_snapshot
 
 
 class ScriptedClient:
-    def __init__(self, responses):
+    def __init__(self, responses, rest_responses=()):
         self.responses = iter(responses)
+        self.rest_responses = iter(rest_responses)
+        self.rest_paths = []
 
     def graphql(self, query, variables):
+        if "query BranchProtection" in query:
+            return {
+                "repository": {
+                    "ref": {
+                        "branchProtectionRule": {
+                            "requiresStatusChecks": False,
+                            "requiredStatusChecks": [],
+                        }
+                    }
+                }
+            }
         response = next(self.responses)
         if isinstance(response, Exception):
             raise response
         return response.get("data", response)
 
     def rest_json(self, path):
-        return []
+        self.rest_paths.append(path)
+        return next(self.rest_responses, [])
 
 
 def test_collection_keeps_successes_and_records_repository_error(fixtures) -> None:
@@ -108,5 +122,52 @@ def test_context_page_error_keeps_pr_as_unclassified(fixtures) -> None:
     client = ScriptedClient([repositories, first, RuntimeError("context denied")])
     snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
     assert snapshot.pull_requests[0].all_context_state == "unclassified"
-    assert snapshot.pull_requests[0].diagnostics[-1].code == "checks.pagination_incomplete"
+    assert any(
+        diagnostic.code == "checks.pagination_incomplete"
+        for diagnostic in snapshot.pull_requests[0].diagnostics
+    )
     assert snapshot.source_errors[0].stage == "contexts:#7"
+
+
+def test_collection_reconciles_cached_base_branch_requirements(fixtures) -> None:
+    from copy import deepcopy
+
+    repositories = deepcopy(fixtures["repositories_page"])
+    repositories["organization"]["repositories"]["nodes"] = repositories["organization"][
+        "repositories"
+    ]["nodes"][:1]
+    client = ScriptedClient(
+        [repositories, fixtures["pull_requests_page"]],
+        [fixtures["effective_rules"]],
+    )
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
+
+    assert snapshot.pull_requests[0].required_check_state == "failing"
+    assert client.rest_paths == ["/repos/Rule-0-Softworks/example/rules/branches/main"]
+
+
+def test_context_page_error_cannot_claim_required_checks_passing(fixtures) -> None:
+    from copy import deepcopy
+
+    repositories = deepcopy(fixtures["repositories_page"])
+    repositories["organization"]["repositories"]["nodes"] = repositories["organization"][
+        "repositories"
+    ]["nodes"][:1]
+    first = deepcopy(fixtures["pull_requests_page"])
+    commit = first["data"]["repository"]["pullRequests"]["nodes"][0]["commits"]["nodes"][0][
+        "commit"
+    ]
+    commit["statusCheckRollup"]["contexts"]["nodes"][0]["conclusion"] = "SUCCESS"
+    commit["statusCheckRollup"]["contexts"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": "context-cursor",
+    }
+    client = ScriptedClient(
+        [repositories, first, RuntimeError("context denied")],
+        [fixtures["effective_rules"]],
+    )
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
+
+    assert snapshot.pull_requests[0].required_check_state == "unknown"

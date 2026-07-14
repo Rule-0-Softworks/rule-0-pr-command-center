@@ -77,7 +77,10 @@ def render_pr_detail(pr: PullRequest) -> str:
     )
     return _page(
         f"{pr.repository} #{pr.number}",
-        f"<a href='/'>Back</a><h1>{escape(pr.title)}</h1><ul>{diagnostics}</ul>"
+        f"<a href='/'>Back</a><h1>{escape(pr.title)}</h1>"
+        f"<dl><dt>All checks</dt><dd>{escape(pr.all_context_state.value)}</dd>"
+        f"<dt>Required checks</dt><dd>{escape(pr.required_check_state.value)}</dd></dl>"
+        f"<ul>{diagnostics}</ul>"
         f"<h2>Contexts</h2><ul>{contexts}</ul>",
     )
 
