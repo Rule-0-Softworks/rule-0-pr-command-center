@@ -171,3 +171,7 @@ def test_context_page_error_cannot_claim_required_checks_passing(fixtures) -> No
     snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
 
     assert snapshot.pull_requests[0].required_check_state == "unknown"
+    assert all(
+        diagnostic.code != "required.passing"
+        for diagnostic in snapshot.pull_requests[0].diagnostics
+    )

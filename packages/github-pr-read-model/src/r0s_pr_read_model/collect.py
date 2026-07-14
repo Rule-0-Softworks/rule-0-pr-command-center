@@ -124,7 +124,7 @@ def _mark_required_contexts_incomplete(pr: PullRequest) -> PullRequest:
         pr,
         required_check_state=RequiredCheckState.UNKNOWN,
         diagnostics=(
-            *pr.diagnostics,
+            *(diagnostic for diagnostic in pr.diagnostics if diagnostic.code != "required.passing"),
             Diagnostic(
                 "required.contexts_incomplete",
                 "required checks cannot be reconciled because context retrieval was incomplete",
