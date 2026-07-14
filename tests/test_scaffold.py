@@ -2,10 +2,19 @@ import tomllib
 from importlib import import_module
 from pathlib import Path
 
+from fastapi import FastAPI
+
 
 def test_workspace_packages_are_importable() -> None:
     assert import_module("r0s_pr_command_center") is not None
     assert import_module("r0s_pr_read_model") is not None
+
+
+def test_serve_entry_point_exposes_a_fastapi_application() -> None:
+    application_module = import_module("r0s_pr_command_center.app")
+
+    assert isinstance(application_module.app, FastAPI)
+    assert callable(application_module.run)
 
 
 def test_workspace_metadata_matches_the_scaffold_contract() -> None:
