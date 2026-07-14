@@ -26,9 +26,7 @@ class GitHubClient:
             ) from error
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
             url = self._redact(request.full_url)
-            raise GitHubError(
-                f"GitHub request failed for {url}: {type(error).__name__}"
-            ) from error
+            raise GitHubError(f"GitHub request failed for {url}: {type(error).__name__}") from error
 
     def graphql(self, query: str, variables: Mapping[str, object]) -> dict[str, Any]:
         body = json.dumps({"query": query, "variables": dict(variables)}).encode()

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from .classify import classify_all_contexts, classify_merge
 from .models import CheckContext, PullRequest, RequiredCheckState
+
+
+def _object_mapping(value: object) -> Mapping[str, object] | None:
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+        return None
+    return cast(Mapping[str, object], value)
 
 
 def _context(raw: Mapping[str, object]) -> CheckContext:
@@ -29,18 +36,26 @@ def _context(raw: Mapping[str, object]) -> CheckContext:
 def normalize_pull_request(repository: str, raw: Mapping[str, object]) -> PullRequest:
     commits = raw.get("commits")
     nodes = commits.get("nodes", []) if isinstance(commits, Mapping) else []
-    commit = nodes[-1].get("commit", {}) if nodes else {}
+    last_node = nodes[-1] if isinstance(nodes, list) and nodes else None
+    commit = last_node.get("commit", {}) if isinstance(last_node, Mapping) else {}
     rollup = commit.get("statusCheckRollup") if isinstance(commit, Mapping) else None
-    raw_contexts = (
-        rollup.get("contexts", {}).get("nodes", []) if isinstance(rollup, Mapping) else []
+    contexts_connection = rollup.get("contexts") if isinstance(rollup, Mapping) else None
+    raw_context_nodes = (
+        contexts_connection.get("nodes", []) if isinstance(contexts_connection, Mapping) else []
     )
-    contexts = tuple(_context(item) for item in raw_contexts)
+    raw_contexts = raw_context_nodes if isinstance(raw_context_nodes, list) else []
+    contexts = tuple(
+        _context(context) for item in raw_contexts if (context := _object_mapping(item)) is not None
+    )
     check_state, check_diagnostic = classify_all_contexts(contexts, rollup is not None)
     merge_blocked, merge_diagnostic = classify_merge(raw)
     author = raw.get("author")
+    number = raw["number"]
+    if not isinstance(number, int | str):
+        raise TypeError("pull request number must be an integer or string")
     return PullRequest(
         repository=repository,
-        number=int(raw["number"]),
+        number=int(number),
         title=str(raw["title"]),
         url=str(raw["url"]),
         author=str(author.get("login"))
