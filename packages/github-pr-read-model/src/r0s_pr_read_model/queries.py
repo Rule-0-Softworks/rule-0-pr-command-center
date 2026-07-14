@@ -46,3 +46,16 @@ query MoreContexts($owner: String!, $name: String!, $oid: GitObjectID!, $cursor:
   }
 }
 """
+
+BRANCH_PROTECTION = """
+query BranchProtection($owner: String!, $name: String!, $qualifiedName: String!) {
+  repository(owner: $owner, name: $name) {
+    ref(qualifiedName: $qualifiedName) {
+      branchProtectionRule {
+        pattern requiresStatusChecks requiresStrictStatusChecks
+        requiredStatusChecks { context app { databaseId slug } }
+      }
+    }
+  }
+}
+"""
