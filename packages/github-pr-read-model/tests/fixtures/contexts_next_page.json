@@ -1,0 +1,21 @@
+{
+  "data": {
+    "repository": {
+      "object": {
+        "statusCheckRollup": {
+          "contexts": {
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{
+              "__typename": "CheckRun",
+              "name": "second-page",
+              "status": "COMPLETED",
+              "conclusion": "SUCCESS",
+              "detailsUrl": "https://github.com/example/check/2",
+              "checkSuite": {"app": {"databaseId": 15368, "slug": "github-actions"}}
+            }]
+          }
+        }
+      }
+    }
+  }
+}
