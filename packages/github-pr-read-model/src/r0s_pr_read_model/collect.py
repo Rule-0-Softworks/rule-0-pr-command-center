@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, Protocol
@@ -93,6 +94,24 @@ def _mark_incomplete(pr: PullRequest, error: Exception) -> PullRequest:
     )
 
 
+def _pull_request_stage(raw_pr: object) -> str:
+    number = raw_pr.get("number") if isinstance(raw_pr, Mapping) else None
+    return f"pull_request:#{number}" if isinstance(number, int | str) else "pull_request"
+
+
+def _unavailable_requirements(error: Exception) -> EffectiveRequirements:
+    error_message = str(error).casefold()
+    if "http 403" in error_message:
+        code, message = "required.rules_forbidden", "rules endpoint access was denied (403)"
+    elif "http 404" in error_message:
+        code, message = "required.rules_not_found", "rules endpoint was not found (404)"
+    elif isinstance(error, TimeoutError) or "timeout" in error_message:
+        code, message = "required.rules_timeout", "rules endpoint timed out"
+    else:
+        code, message = "required.rules_unavailable", "rules endpoint was unavailable"
+    return EffectiveRequirements((), False, False, Diagnostic(code, message, "rules"))
+
+
 def _requirements_for_branch(
     client: GitHubReadClient,
     owner: str,
@@ -103,8 +122,8 @@ def _requirements_for_branch(
         effective_rules = client.rest_json(
             f"/repos/{owner}/{name}/rules/branches/{quote(branch, safe='')}"
         )
-    except (KeyError, TypeError, ValueError, RuntimeError):
-        return extract_effective_requirements(None, None)
+    except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
+        return _unavailable_requirements(error)
     requirements = extract_effective_requirements(effective_rules, None)
     if not requirements.available or requirements.checks:
         return requirements
@@ -114,8 +133,8 @@ def _requirements_for_branch(
             {"owner": owner, "name": name, "qualifiedName": f"refs/heads/{branch}"},
         )
         branch_protection = data["repository"]["ref"]["branchProtectionRule"]
-    except (KeyError, TypeError, ValueError, RuntimeError):
-        return extract_effective_requirements(None, None)
+    except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
+        return _unavailable_requirements(error)
     return extract_effective_requirements(effective_rules, branch_protection)
 
 
@@ -154,6 +173,7 @@ def collect_repository_prs(
             break
         for raw_pr in nodes:
             contexts_complete = True
+            context_error: Exception | None = None
             try:
                 commit = raw_pr["commits"]["nodes"][-1]["commit"]
                 rollup = commit.get("statusCheckRollup")
@@ -161,13 +181,30 @@ def collect_repository_prs(
                 if page.get("hasNextPage"):
                     contexts = collect_remaining_contexts(client, repository, raw_pr)
                     _replace_contexts(raw_pr, contexts)
-                pr = normalize_pull_request(repository, raw_pr)
             except (KeyError, TypeError, ValueError, RuntimeError) as error:
-                normalized = normalize_pull_request(repository, raw_pr)
-                pr = _mark_incomplete(normalized, error)
+                context_error = error
+
+            try:
+                pr = normalize_pull_request(repository, raw_pr)
+            except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
+                errors.append(
+                    SourceError(
+                        repository,
+                        _pull_request_stage(raw_pr),
+                        "pull request payload could not be normalized",
+                    )
+                )
+                continue
+
+            if context_error is not None:
+                pr = _mark_incomplete(pr, context_error)
                 contexts_complete = False
                 errors.append(
-                    SourceError(repository, f"contexts:#{raw_pr['number']}", _message(error))
+                    SourceError(
+                        repository,
+                        f"contexts:#{pr.number}",
+                        _message(context_error),
+                    )
                 )
             requirements = requirements_by_branch.get(pr.base_ref_name)
             if requirements is None:

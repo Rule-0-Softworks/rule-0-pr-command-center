@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from r0s_pr_read_model.collect import collect_snapshot
 
 
@@ -28,7 +29,10 @@ class ScriptedClient:
 
     def rest_json(self, path):
         self.rest_paths.append(path)
-        return next(self.rest_responses, [])
+        response = next(self.rest_responses, [])
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def test_collection_keeps_successes_and_records_repository_error(fixtures) -> None:
@@ -175,3 +179,61 @@ def test_context_page_error_cannot_claim_required_checks_passing(fixtures) -> No
         diagnostic.code != "required.passing"
         for diagnostic in snapshot.pull_requests[0].diagnostics
     )
+
+
+def test_malformed_pr_does_not_block_other_prs(fixtures) -> None:
+    from copy import deepcopy
+
+    repositories = deepcopy(fixtures["repositories_page"])
+    repositories["organization"]["repositories"]["nodes"] = repositories["organization"][
+        "repositories"
+    ]["nodes"][:1]
+    pull_requests = deepcopy(fixtures["pull_requests_page"])
+    malformed = pull_requests["data"]["repository"]["pullRequests"]["nodes"][0]
+    malformed.pop("title")
+    valid = deepcopy(malformed)
+    valid["number"] = 8
+    valid["title"] = "A valid pull request"
+    pull_requests["data"]["repository"]["pullRequests"]["nodes"] = [malformed, valid]
+    client = ScriptedClient([repositories, pull_requests])
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
+
+    assert [pr.number for pr in snapshot.pull_requests] == [8]
+    assert snapshot.source_errors[0].stage == "pull_request:#7"
+    assert snapshot.source_errors[0].message == "pull request payload could not be normalized"
+
+
+@pytest.mark.parametrize(
+    ("failure", "diagnostic_code"),
+    [
+        (RuntimeError("GitHub HTTP 403 for secret-value"), "required.rules_forbidden"),
+        (RuntimeError("GitHub HTTP 404 for secret-value"), "required.rules_not_found"),
+        (TimeoutError("secret-value"), "required.rules_timeout"),
+        ({"unexpected": "mapping"}, "required.rules_malformed"),
+        (RuntimeError("service unavailable: secret-value"), "required.rules_unavailable"),
+    ],
+)
+def test_required_rule_failure_keeps_a_sanitized_specific_reason(
+    fixtures, failure, diagnostic_code
+) -> None:
+    from copy import deepcopy
+
+    repositories = deepcopy(fixtures["repositories_page"])
+    repositories["organization"]["repositories"]["nodes"] = repositories["organization"][
+        "repositories"
+    ]["nodes"][:1]
+    client = ScriptedClient(
+        [repositories, fixtures["pull_requests_page"]],
+        [failure],
+    )
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", datetime(2026, 7, 14, tzinfo=UTC))
+
+    diagnostic = next(
+        item for item in snapshot.pull_requests[0].diagnostics if item.code == diagnostic_code
+    )
+    source_error = next(item for item in snapshot.source_errors if item.stage == "required_rules")
+    assert source_error.message == diagnostic.message
+    assert "secret-value" not in diagnostic.message
+    assert "secret-value" not in source_error.message
