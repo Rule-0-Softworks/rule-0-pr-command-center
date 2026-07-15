@@ -140,6 +140,7 @@ def test_stylesheet_switches_from_table_to_cards_at_narrow_breakpoint() -> None:
     assert "@media (max-width: 48rem)" in css
     assert ".desktop-inventory { display: none; }" in css
     assert ".compact-pr-list { display: grid;" in css
+    assert ".compact-pr-card code { white-space: normal; overflow-wrap: anywhere; }" in css
     assert "table { min-width: 80rem; }" not in css
 
 

@@ -44,6 +44,7 @@ code { white-space: nowrap; }
 .compact-pr-card h3, .compact-pr-card p { margin-block: 0 0.5rem; }
 .compact-pr-card dl { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.5rem; }
 .compact-pr-card dt { font-weight: 700; }
+.compact-pr-card code { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 48rem) {
   main { padding: 0.5rem; }
   .desktop-inventory { display: none; }
