@@ -20,6 +20,45 @@ class DashboardFilter:
     merge_blocked: bool | None = None
 
 
+_TRIAGE_TIERS = {
+    "failing": 0,
+    "unknown_required": 1,
+    "merge_blocked": 2,
+    "review_required": 3,
+    "pending": 4,
+    "remaining": 5,
+}
+
+
+def triage_tier(pr: PullRequest) -> str:
+    if pr.all_context_state is CheckState.FAILING:
+        return "failing"
+    if pr.required_check_state is RequiredCheckState.UNKNOWN:
+        return "unknown_required"
+    if pr.merge_blocked:
+        return "merge_blocked"
+    if pr.review_decision == "REVIEW_REQUIRED":
+        return "review_required"
+    if pr.all_context_state is CheckState.PENDING:
+        return "pending"
+    return "remaining"
+
+
+def triage_priority(pr: PullRequest) -> int:
+    return _TRIAGE_TIERS[triage_tier(pr)]
+
+
+def order_for_triage(prs: tuple[PullRequest, ...]) -> tuple[PullRequest, ...]:
+    return tuple(sorted(prs, key=triage_priority))
+
+
+def triage_bucket_counts(snapshot: DashboardSnapshot) -> dict[str, int]:
+    counts = {tier: 0 for tier in _TRIAGE_TIERS}
+    for pr in snapshot.pull_requests:
+        counts[triage_tier(pr)] += 1
+    return counts
+
+
 def filter_prs(snapshot: DashboardSnapshot, selected: DashboardFilter) -> tuple[PullRequest, ...]:
     return tuple(
         pr
