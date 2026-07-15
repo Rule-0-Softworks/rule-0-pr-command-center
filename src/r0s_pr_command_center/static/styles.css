@@ -39,7 +39,14 @@ code { white-space: nowrap; }
   margin: 0;
   padding-left: 1.25rem;
 }
+.compact-pr-list { display: none; list-style: none; margin: 0; padding: 0; }
+.compact-pr-card { border: 1px solid GrayText; padding: 0.75rem; }
+.compact-pr-card h3, .compact-pr-card p { margin-block: 0 0.5rem; }
+.compact-pr-card dl { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.5rem; }
+.compact-pr-card dt { font-weight: 700; }
+.compact-pr-card code { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 48rem) {
   main { padding: 0.5rem; }
-  table { min-width: 80rem; }
+  .desktop-inventory { display: none; }
+  .compact-pr-list { display: grid; gap: 0.75rem; }
 }

@@ -102,11 +102,15 @@ def render_dashboard(snapshot: DashboardSnapshot, selected: DashboardFilter) -> 
         )
     counts = count_facets(snapshot)
     triage = _triage_summary(triage_bucket_counts(snapshot))
+    desktop = (
+        f"<table class='desktop-inventory'><thead>{_head()}</thead><tbody>{rows}</tbody></table>"
+    )
+    inventory = f"{desktop}{_compact_cards(prs)}"
     return _page(
         "PR Command Center",
         f"{warning}<form method='post' action='/refresh'>"
         "<button type='submit'>Refresh snapshot</button></form>"
-        f"{triage}{_facet_nav(counts)}<table><thead>{_head()}</thead><tbody>{rows}</tbody></table>",
+        f"{triage}{_facet_nav(counts)}{inventory}",
     )
 
 
@@ -157,6 +161,39 @@ def _triage_summary(counts: dict[str, int]) -> str:
         "<section class='triage-summary' aria-labelledby='triage-heading'>"
         "<h2 id='triage-heading'>Needs attention</h2><ul>"
         f"{items}</ul></section>"
+    )
+
+
+def _compact_cards(prs: tuple[PullRequest, ...]) -> str:
+    return (
+        "<ul class='compact-pr-list' aria-label='Pull request inventory'>"
+        + "".join(_compact_card(pr) for pr in prs)
+        + "</ul>"
+    )
+
+
+def _compact_card(pr: PullRequest) -> str:
+    owner, repo = pr.repository.split("/", 1)
+    detail = f"/prs/{escape(owner)}/{escape(repo)}/{pr.number}"
+    diagnostics = "".join(
+        f"<li><code>{escape(item.code)}</code> {escape(item.message)}</li>"
+        for item in pr.diagnostics
+    )
+    return (
+        "<li><article class='compact-pr-card'>"
+        f"<h3>{escape(pr.repository)} <a href='{detail}'>#{pr.number} {escape(pr.title)}</a></h3>"
+        f"<p><strong>Attention:</strong> {escape(triage_tier(pr))}</p>"
+        f"<p><strong>Required checks:</strong> {escape(pr.required_check_state.value)}</p>"
+        f"<p><strong>Review:</strong> {escape(pr.review_decision or 'NONE')}</p>"
+        "<details><summary>More details</summary>"
+        f"<dl><dt>Author</dt><dd>{escape(pr.author or 'unknown')}</dd>"
+        f"<dt>Draft</dt><dd>{'yes' if pr.is_draft else 'no'}</dd>"
+        f"<dt>Base</dt><dd>{escape(pr.base_ref_name)}</dd>"
+        f"<dt>Head SHA</dt><dd><code>{escape(pr.head_sha)}</code></dd>"
+        f"<dt>Mergeable</dt><dd>{escape(pr.mergeable)}</dd>"
+        f"<dt>Merge state</dt><dd>{escape(pr.merge_state_status)}</dd></dl>"
+        f"<p><a href='{escape(pr.url)}'>Open on GitHub</a></p>"
+        f"<ul>{diagnostics}</ul></details></article></li>"
     )
 
 
