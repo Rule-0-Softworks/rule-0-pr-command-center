@@ -88,7 +88,9 @@ def count_facets(snapshot: DashboardSnapshot) -> dict[str, dict[str, int]]:
 
 
 def render_dashboard(snapshot: DashboardSnapshot, selected: DashboardFilter) -> str:
-    rows = "".join(_row(pr) for pr in filter_prs(snapshot, selected))
+    filtered = filter_prs(snapshot, selected)
+    prs = order_for_triage(filtered) if selected == DashboardFilter() else filtered
+    rows = "".join(_row(pr) for pr in prs)
     warning = ""
     if not snapshot.is_complete:
         errors = "".join(
@@ -99,11 +101,12 @@ def render_dashboard(snapshot: DashboardSnapshot, selected: DashboardFilter) -> 
             f'<section class="warning"><h2>Completeness warning</h2><ul>{errors}</ul></section>'
         )
     counts = count_facets(snapshot)
+    triage = _triage_summary(triage_bucket_counts(snapshot))
     return _page(
         "PR Command Center",
         f"{warning}<form method='post' action='/refresh'>"
         "<button type='submit'>Refresh snapshot</button></form>"
-        f"{_facet_nav(counts)}<table><thead>{_head()}</thead><tbody>{rows}</tbody></table>",
+        f"{triage}{_facet_nav(counts)}<table><thead>{_head()}</thead><tbody>{rows}</tbody></table>",
     )
 
 
@@ -133,6 +136,27 @@ def _page(title: str, body: str) -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{escape(title)}</title><link rel='stylesheet' href='/static/styles.css'>"
         f"</head><body><main>{body}</main></body></html>"
+    )
+
+
+def _triage_summary(counts: dict[str, int]) -> str:
+    labels = (
+        ("failing", "Failing checks"),
+        ("unknown_required", "Unknown required checks"),
+        ("merge_blocked", "Merge blocked"),
+        ("review_required", "Review required"),
+        ("pending", "Pending checks"),
+    )
+    items = "".join(
+        f"<li><strong>{label}:</strong> {counts[key]}"
+        + (" — no pull requests" if counts[key] == 0 else "")
+        + "</li>"
+        for key, label in labels
+    )
+    return (
+        "<section class='triage-summary' aria-labelledby='triage-heading'>"
+        "<h2 id='triage-heading'>Needs attention</h2><ul>"
+        f"{items}</ul></section>"
     )
 
 

@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 from r0s_pr_read_model.models import CheckState, RequiredCheckState
+
 from r0s_pr_command_center.views import (
     DashboardFilter,
     count_facets,
@@ -75,6 +76,82 @@ def test_triage_bucket_counts_choose_the_highest_priority_state(snapshot_factory
         "pending": 0,
         "remaining": 1,
     }
+
+
+def test_dashboard_renders_all_named_whole_snapshot_triage_buckets(snapshot_factory) -> None:
+    snapshot = snapshot_factory(states=("failing", "passing", "passing", "passing", "pending"))
+    failing, unknown, blocked, review, pending = snapshot.pull_requests
+    html = render_dashboard(
+        replace(
+            snapshot,
+            pull_requests=(
+                replace(failing, required_check_state=RequiredCheckState.PASSING),
+                replace(unknown, required_check_state=RequiredCheckState.UNKNOWN),
+                replace(
+                    blocked,
+                    required_check_state=RequiredCheckState.PASSING,
+                    merge_blocked=True,
+                ),
+                replace(
+                    review,
+                    required_check_state=RequiredCheckState.PASSING,
+                    review_decision="REVIEW_REQUIRED",
+                ),
+                replace(pending, required_check_state=RequiredCheckState.PASSING),
+            ),
+        ),
+        DashboardFilter(),
+    )
+
+    assert "Needs attention" in html
+    assert "Failing checks:</strong> 1" in html
+    assert "Unknown required checks:</strong> 1" in html
+    assert "Merge blocked:</strong> 1" in html
+    assert "Review required:</strong> 1" in html
+    assert "Pending checks:</strong> 1" in html
+    assert html.index("Needs attention") < html.index("<table>")
+
+
+def test_dashboard_explains_zero_count_triage_buckets(snapshot_factory) -> None:
+    html = render_dashboard(snapshot_factory(states=("passing",)), DashboardFilter())
+
+    assert "Failing checks:</strong> 0 — no pull requests" in html
+    assert "Pending checks:</strong> 0 — no pull requests" in html
+
+
+def test_dashboard_renders_failing_then_pending_then_passing(snapshot_factory) -> None:
+    snapshot = snapshot_factory(states=("passing", "failing", "pending"))
+    passing, failing, pending = snapshot.pull_requests
+    html = render_dashboard(
+        replace(
+            snapshot,
+            pull_requests=(
+                replace(passing, required_check_state=RequiredCheckState.PASSING),
+                replace(failing, required_check_state=RequiredCheckState.PASSING),
+                replace(pending, required_check_state=RequiredCheckState.PASSING),
+            ),
+        ),
+        DashboardFilter(),
+    )
+
+    assert html.index("#2 Example PR") < html.index("#3 Example PR") < html.index("#1 Example PR")
+
+
+def test_filtered_dashboard_preserves_snapshot_order(snapshot_factory) -> None:
+    snapshot = snapshot_factory(states=("passing", "failing", "pending"))
+    passing, failing, pending = snapshot.pull_requests
+    configured = replace(
+        snapshot,
+        pull_requests=(
+            replace(passing, required_check_state=RequiredCheckState.PASSING),
+            replace(failing, required_check_state=RequiredCheckState.PASSING),
+            replace(pending, required_check_state=RequiredCheckState.PASSING),
+        ),
+    )
+
+    html = render_dashboard(configured, DashboardFilter(review="NONE"))
+
+    assert html.index("#1 Example PR") < html.index("#2 Example PR") < html.index("#3 Example PR")
 
 
 def test_dashboard_escapes_titles_and_exposes_expandable_diagnostics(snapshot_factory) -> None:
