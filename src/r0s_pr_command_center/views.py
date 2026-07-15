@@ -20,6 +20,45 @@ class DashboardFilter:
     merge_blocked: bool | None = None
 
 
+_TRIAGE_TIERS = {
+    "failing": 0,
+    "unknown_required": 1,
+    "merge_blocked": 2,
+    "review_required": 3,
+    "pending": 4,
+    "remaining": 5,
+}
+
+
+def triage_tier(pr: PullRequest) -> str:
+    if pr.all_context_state is CheckState.FAILING:
+        return "failing"
+    if pr.required_check_state is RequiredCheckState.UNKNOWN:
+        return "unknown_required"
+    if pr.merge_blocked:
+        return "merge_blocked"
+    if pr.review_decision == "REVIEW_REQUIRED":
+        return "review_required"
+    if pr.all_context_state is CheckState.PENDING:
+        return "pending"
+    return "remaining"
+
+
+def triage_priority(pr: PullRequest) -> int:
+    return _TRIAGE_TIERS[triage_tier(pr)]
+
+
+def order_for_triage(prs: tuple[PullRequest, ...]) -> tuple[PullRequest, ...]:
+    return tuple(sorted(prs, key=triage_priority))
+
+
+def triage_bucket_counts(snapshot: DashboardSnapshot) -> dict[str, int]:
+    counts = {tier: 0 for tier in _TRIAGE_TIERS}
+    for pr in snapshot.pull_requests:
+        counts[triage_tier(pr)] += 1
+    return counts
+
+
 def filter_prs(snapshot: DashboardSnapshot, selected: DashboardFilter) -> tuple[PullRequest, ...]:
     return tuple(
         pr
@@ -49,7 +88,9 @@ def count_facets(snapshot: DashboardSnapshot) -> dict[str, dict[str, int]]:
 
 
 def render_dashboard(snapshot: DashboardSnapshot, selected: DashboardFilter) -> str:
-    rows = "".join(_row(pr) for pr in filter_prs(snapshot, selected))
+    filtered = filter_prs(snapshot, selected)
+    prs = order_for_triage(filtered) if selected == DashboardFilter() else filtered
+    rows = "".join(_row(pr) for pr in prs)
     warning = ""
     if not snapshot.is_complete:
         errors = "".join(
@@ -60,11 +101,12 @@ def render_dashboard(snapshot: DashboardSnapshot, selected: DashboardFilter) -> 
             f'<section class="warning"><h2>Completeness warning</h2><ul>{errors}</ul></section>'
         )
     counts = count_facets(snapshot)
+    triage = _triage_summary(triage_bucket_counts(snapshot))
     return _page(
         "PR Command Center",
         f"{warning}<form method='post' action='/refresh'>"
         "<button type='submit'>Refresh snapshot</button></form>"
-        f"{_facet_nav(counts)}<table><thead>{_head()}</thead><tbody>{rows}</tbody></table>",
+        f"{triage}{_facet_nav(counts)}<table><thead>{_head()}</thead><tbody>{rows}</tbody></table>",
     )
 
 
@@ -94,6 +136,27 @@ def _page(title: str, body: str) -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{escape(title)}</title><link rel='stylesheet' href='/static/styles.css'>"
         f"</head><body><main>{body}</main></body></html>"
+    )
+
+
+def _triage_summary(counts: dict[str, int]) -> str:
+    labels = (
+        ("failing", "Failing checks"),
+        ("unknown_required", "Unknown required checks"),
+        ("merge_blocked", "Merge blocked"),
+        ("review_required", "Review required"),
+        ("pending", "Pending checks"),
+    )
+    items = "".join(
+        f"<li><strong>{label}:</strong> {counts[key]}"
+        + (" — no pull requests" if counts[key] == 0 else "")
+        + "</li>"
+        for key, label in labels
+    )
+    return (
+        "<section class='triage-summary' aria-labelledby='triage-heading'>"
+        "<h2 id='triage-heading'>Needs attention</h2><ul>"
+        f"{items}</ul></section>"
     )
 
 
