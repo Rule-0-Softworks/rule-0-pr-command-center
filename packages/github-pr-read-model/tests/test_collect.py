@@ -3,7 +3,11 @@ from datetime import UTC, datetime
 
 import pytest
 from r0s_pr_read_model.client import GraphQLIssue, GraphQLResponse
-from r0s_pr_read_model.collect import collect_snapshot
+from r0s_pr_read_model.collect import (
+    collect_repositories,
+    collect_repository_prs,
+    collect_snapshot,
+)
 from r0s_pr_read_model.models import (
     CheckEvidenceState,
     CheckState,
@@ -217,6 +221,46 @@ def test_pr_pagination_stops_on_missing_or_repeated_cursor(fixtures, cursor) -> 
     assert "pagination cursor" in pagination_error.message
 
 
+def test_pr_pagination_stops_on_cursor_cycle_and_keeps_accepted_pages(fixtures) -> None:
+    first = _inventory(fixtures)
+    first["data"]["repository"]["pullRequests"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": "pr-a",
+    }
+    second = deepcopy(fixtures["pull_requests_next_page"])
+    second["data"]["repository"]["pullRequests"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": "pr-b",
+    }
+    third = deepcopy(second)
+    third_pr = third["data"]["repository"]["pullRequests"]["nodes"][0]
+    third_pr.update(
+        {
+            "number": 9,
+            "title": "Synthetic third PR",
+            "url": "https://github.com/Rule-0-Softworks/example/pull/9",
+        }
+    )
+    third["data"]["repository"]["pullRequests"]["pageInfo"]["endCursor"] = "pr-a"
+    client = ScriptedClient(
+        [
+            first,
+            _null_rollup_response(),
+            second,
+            _null_rollup_response(),
+            third,
+            _null_rollup_response(),
+            AssertionError("collector requested another PR page after a cursor cycle"),
+        ]
+    )
+
+    pull_requests, errors = collect_repository_prs(client, "Rule-0-Softworks/example")
+
+    assert [pr.number for pr in pull_requests] == [7, 8, 9]
+    pagination_error = next(item for item in errors if item.stage == "pull_requests")
+    assert "pagination cursor" in pagination_error.message
+
+
 def test_collection_reads_every_repository_page(fixtures) -> None:
     first = deepcopy(fixtures["repositories_page"])
     first_repositories = first["organization"]["repositories"]
@@ -269,6 +313,51 @@ def test_repository_pagination_stops_on_missing_or_repeated_cursor(fixtures, cur
     assert [pr.number for pr in snapshot.pull_requests] == [7]
     pagination_error = next(item for item in snapshot.source_errors if item.stage == "repositories")
     assert "pagination cursor" in pagination_error.message
+
+
+@pytest.mark.parametrize("cursor", [0, ""])
+def test_repository_pagination_stops_on_invalid_cursor(fixtures, cursor) -> None:
+    page = _one_repository(fixtures)
+    page["organization"]["repositories"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": cursor,
+    }
+    client = ScriptedClient(
+        [page, AssertionError("collector requested another repository page with an invalid cursor")]
+    )
+
+    repositories, errors = collect_repositories(client, "Rule-0-Softworks")
+
+    assert repositories == ["Rule-0-Softworks/example"]
+    assert errors[-1].stage == "repositories"
+    assert "pagination cursor" in errors[-1].message
+
+
+def test_repository_pagination_stops_on_cursor_cycle_and_keeps_accepted_pages(fixtures) -> None:
+    pages = []
+    for repository, cursor in (
+        ("Rule-0-Softworks/first", "repository-a"),
+        ("Rule-0-Softworks/second", "repository-b"),
+        ("Rule-0-Softworks/third", "repository-a"),
+    ):
+        page = _one_repository(fixtures)
+        connection = page["organization"]["repositories"]
+        connection["nodes"][0]["nameWithOwner"] = repository
+        connection["pageInfo"] = {"hasNextPage": True, "endCursor": cursor}
+        pages.append(page)
+    client = ScriptedClient(
+        [*pages, AssertionError("collector requested another repository page after a cursor cycle")]
+    )
+
+    repositories, errors = collect_repositories(client, "Rule-0-Softworks")
+
+    assert repositories == [
+        "Rule-0-Softworks/first",
+        "Rule-0-Softworks/second",
+        "Rule-0-Softworks/third",
+    ]
+    assert errors[-1].stage == "repositories"
+    assert "pagination cursor" in errors[-1].message
 
 
 def test_forbidden_enrichment_does_not_erase_accessible_inventory(fixtures) -> None:
@@ -444,6 +533,40 @@ def test_context_pagination_stops_on_missing_or_repeated_cursor(fixtures, cursor
     pagination_error = next(
         item for item in snapshot.source_errors if item.stage == "check_contexts"
     )
+    assert pagination_error.pull_request_number == 7
+    assert "pagination cursor" in pagination_error.message
+
+
+def test_context_pagination_stops_on_cursor_cycle_and_keeps_accepted_pages(fixtures) -> None:
+    first_context = deepcopy(CHECK_CONTEXTS[0])
+    first_context["name"] = "first-page"
+    second_context = deepcopy(first_context)
+    second_context["name"] = "second-page"
+    third_context = deepcopy(first_context)
+    third_context["name"] = "third-page"
+    client = ScriptedClient(
+        [
+            _inventory(fixtures),
+            _rollup_response([first_context], has_next=True, cursor="context-a"),
+            _rollup_response([second_context], has_next=True, cursor="context-b"),
+            _rollup_response([third_context], has_next=True, cursor="context-a"),
+            AssertionError("collector requested another context page after a cursor cycle"),
+        ]
+    )
+
+    pull_requests, errors = collect_repository_prs(client, "Rule-0-Softworks/example")
+    pr = pull_requests[0]
+
+    assert [context.name for context in pr.contexts] == [
+        "first-page",
+        "second-page",
+        "third-page",
+    ]
+    assert pr.check_evidence_state is CheckEvidenceState.INCOMPLETE
+    assert pr.all_context_state is CheckState.UNKNOWN
+    assert pr.required_check_state is RequiredCheckState.UNKNOWN
+    assert _diagnostic(pr, "checks.pagination_incomplete")
+    pagination_error = next(item for item in errors if item.stage == "check_contexts")
     assert pagination_error.pull_request_number == 7
     assert "pagination cursor" in pagination_error.message
 

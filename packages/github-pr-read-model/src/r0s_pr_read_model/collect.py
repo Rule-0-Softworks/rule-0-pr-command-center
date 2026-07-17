@@ -36,11 +36,14 @@ def _connection(value: Mapping[str, Any]) -> tuple[list[dict[str, Any]], bool, s
     return list(value["nodes"]), bool(page["hasNextPage"]), page.get("endCursor")
 
 
-def _continuation_cursor(current: str | None, next_cursor: str | None) -> str:
+def _continuation_cursor(seen_cursors: set[str], next_cursor: object) -> str:
     if next_cursor is None:
         raise ValueError("pagination cursor was missing")
-    if next_cursor == current:
+    if not isinstance(next_cursor, str) or not next_cursor:
+        raise ValueError("pagination cursor was invalid")
+    if next_cursor in seen_cursors:
         raise ValueError("pagination cursor did not advance")
+    seen_cursors.add(next_cursor)
     return next_cursor
 
 
@@ -73,6 +76,7 @@ def collect_repositories(
     repositories: list[str] = []
     errors: list[SourceError] = []
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     while True:
         try:
             response = client.graphql(REPOSITORIES, {"org": organization, "cursor": cursor})
@@ -83,7 +87,7 @@ def collect_repositories(
             repositories.extend(str(node["nameWithOwner"]) for node in nodes)
             if not has_next:
                 break
-            cursor = _continuation_cursor(cursor, next_cursor)
+            cursor = _continuation_cursor(seen_cursors, next_cursor)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(None, "repositories", _message(error)))
             break
@@ -132,6 +136,7 @@ def _collect_check_evidence(
 ) -> tuple[CheckEvidence, list[SourceError]]:
     owner, name = repository.split("/", 1)
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     variables: dict[str, object] = {
         "owner": owner,
         "name": name,
@@ -200,7 +205,7 @@ def _collect_check_evidence(
 
     if has_next:
         try:
-            cursor = _continuation_cursor(cursor, next_cursor)
+            cursor = _continuation_cursor(seen_cursors, next_cursor)
         except ValueError as error:
             errors.append(
                 SourceError(repository, "check_contexts", _message(error), pull_request_number)
@@ -268,7 +273,7 @@ def _collect_check_evidence(
             )
         if has_next:
             try:
-                cursor = _continuation_cursor(cursor, next_cursor)
+                cursor = _continuation_cursor(seen_cursors, next_cursor)
             except ValueError as error:
                 errors.append(
                     SourceError(
@@ -385,6 +390,7 @@ def collect_repository_prs(
     errors: list[SourceError] = []
     requirements_by_branch: dict[str, EffectiveRequirements] = {}
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     while True:
         try:
             response = client.graphql(
@@ -437,7 +443,7 @@ def collect_repository_prs(
         if not has_next:
             break
         try:
-            cursor = _continuation_cursor(cursor, next_cursor)
+            cursor = _continuation_cursor(seen_cursors, next_cursor)
         except ValueError as error:
             errors.append(SourceError(repository, "pull_requests", _message(error)))
             break
