@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
-from .models import CheckContext, CheckState, Diagnostic
+from .models import CheckEvidence, CheckEvidenceState, CheckState, Diagnostic
 
 FAILURES = frozenset(
     {
@@ -19,17 +19,26 @@ PENDING = frozenset({"QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "EXPECTED", 
 PASSING = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
 
 
-def classify_all_contexts(
-    contexts: Sequence[CheckContext], rollup_present: bool
-) -> tuple[CheckState, Diagnostic]:
-    if not rollup_present:
+def classify_all_contexts(evidence: CheckEvidence) -> tuple[CheckState, Diagnostic]:
+    if evidence.state is CheckEvidenceState.UNAVAILABLE:
+        return CheckState.UNKNOWN, evidence.diagnostic or Diagnostic(
+            "checks.rollup_unavailable", "status check rollup could not be retrieved", "rollup"
+        )
+    if evidence.state is CheckEvidenceState.INCOMPLETE:
+        return CheckState.UNKNOWN, evidence.diagnostic or Diagnostic(
+            "checks.pagination_incomplete",
+            "not every status context could be retrieved",
+            "contexts",
+        )
+    if evidence.state is CheckEvidenceState.NO_ROLLUP:
         return CheckState.NO_CHECKS, Diagnostic(
             "checks.no_rollup", "latest commit has no status check rollup", "rollup"
         )
-    if not contexts:
+    if evidence.state is CheckEvidenceState.EMPTY_ROLLUP:
         return CheckState.NO_CHECKS, Diagnostic(
             "checks.empty_rollup", "status check rollup contains no contexts", "rollup"
         )
+    contexts = evidence.contexts
     observed = {item.conclusion or item.status or "UNKNOWN" for item in contexts}
     if observed & FAILURES:
         return CheckState.FAILING, Diagnostic(

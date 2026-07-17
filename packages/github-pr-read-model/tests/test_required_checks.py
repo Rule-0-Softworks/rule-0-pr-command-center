@@ -1,6 +1,6 @@
 import pytest
 from r0s_pr_read_model.models import RequiredCheckState
-from r0s_pr_read_model.normalize import normalize_pull_request
+from r0s_pr_read_model.normalize import check_evidence_from_rollup, normalize_pull_request
 from r0s_pr_read_model.required_checks import (
     apply_required_requirements,
     classify_required_checks,
@@ -45,7 +45,10 @@ def test_malformed_effective_rules_remain_unknown(payload) -> None:
 
 def test_malformed_rules_emit_required_rules_source_error(fixtures) -> None:
     raw = fixtures["pull_requests_page"]["data"]["repository"]["pullRequests"]["nodes"][0]
-    pr = normalize_pull_request("Rule-0-Softworks/example", raw)
+    raw_rollup = raw["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
+    pr = normalize_pull_request(
+        "Rule-0-Softworks/example", raw, check_evidence_from_rollup(raw_rollup)
+    )
     requirements = extract_effective_requirements({"unexpected": "mapping"}, None)
     updated, source_error = apply_required_requirements(pr, requirements)
     assert updated.required_check_state is RequiredCheckState.UNKNOWN
@@ -61,7 +64,10 @@ def test_merge_queue_rules_do_not_report_pr_head_checks_as_passing(fixtures) -> 
     raw["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["nodes"][0][
         "conclusion"
     ] = "SUCCESS"
-    pr = normalize_pull_request("Rule-0-Softworks/example", raw)
+    raw_rollup = raw["commits"]["nodes"][0]["commit"]["statusCheckRollup"]
+    pr = normalize_pull_request(
+        "Rule-0-Softworks/example", raw, check_evidence_from_rollup(raw_rollup)
+    )
     requirements = extract_effective_requirements(fixtures["effective_rules"], None)
 
     updated, _ = apply_required_requirements(pr, requirements)

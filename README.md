@@ -19,6 +19,12 @@ The application reads `GITHUB_TOKEN` first and also supports `GH_TOKEN`. Do
 not set both names to different values. No credential is stored by the
 application, written to its output, or included in the repository.
 
+Use a fine-grained personal access token (FGPAT) only with the repository and
+pull-request read access it needs. Some check metadata can be unavailable to an
+FGPAT, so the dashboard marks that check evidence as unavailable or partial
+rather than making an all-clear claim. GitHub App mode supplies full fidelity
+when the app has the necessary repository permissions. For clarity: classic PATs are not supported.
+
 Install the locked environment and start the local server:
 
 ```powershell

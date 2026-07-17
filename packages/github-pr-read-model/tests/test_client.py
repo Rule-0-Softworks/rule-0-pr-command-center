@@ -29,7 +29,7 @@ def test_graphql_sends_auth_without_returning_token() -> None:
         return Response(b'{"data":{"organization":{"login":"Rule-0-Softworks"}}}')
 
     result = GitHubClient("secret-value", opener=opener).graphql("query { viewer { login } }", {})
-    assert result["organization"]["login"] == "Rule-0-Softworks"
+    assert result.data["organization"]["login"] == "Rule-0-Softworks"
     assert seen["authorization"] == "Bearer secret-value"
     assert "secret-value" not in repr(result)
 
@@ -45,10 +45,41 @@ def test_http_error_never_contains_token() -> None:
     assert "secret-value" not in str(raised.value)
 
 
-def test_graphql_error_never_contains_token() -> None:
+def test_graphql_partial_data_preserves_redacted_issue_metadata() -> None:
     def opener(request: Request, timeout: float) -> Response:
-        return Response(b'{"errors":[{"message":"secret-value was rejected"}]}')
+        return Response(
+            b'{"data":{"repository":{"name":"example"}},"errors":[{'
+            b'"message":"secret-value denied",'
+            b'"path":["repository","pullRequests","nodes",0,"commits"],'
+            b'"locations":[{"line":12,"column":9}]}]}'
+        )
 
-    with pytest.raises(GitHubError) as raised:
-        GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
-    assert "secret-value" not in str(raised.value)
+    result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+
+    assert result.data["repository"]["name"] == "example"
+    assert result.errors[0].message == "[REDACTED] denied"
+    assert result.errors[0].path == ("repository", "pullRequests", "nodes", 0, "commits")
+    assert result.errors[0].locations == ((12, 9),)
+
+
+def test_graphql_issue_discards_boolean_location_coordinates() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(
+            b'{"data":{},"errors":[{"message":"denied","locations":['
+            b'{"line":true,"column":9},{"line":12,"column":false},{"line":4,"column":2}]}]}'
+        )
+
+    result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+
+    assert result.errors[0].locations == ((4, 2),)
+
+
+def test_graphql_issue_discards_path_with_boolean_segment() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(
+            b'{"data":{},"errors":[{"message":"denied","path":["repository",true,"pullRequests"]}]}'
+        )
+
+    result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+
+    assert result.errors[0].path == ()
