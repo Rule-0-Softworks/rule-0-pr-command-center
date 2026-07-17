@@ -82,8 +82,9 @@ class GitHubClient:
         locations = item.get("locations")
         return GraphQLIssue(
             message=self._redact(str(item.get("message", "GraphQL error"))),
-            path=tuple(value for value in path if isinstance(value, (str, int)))
+            path=tuple(path)
             if isinstance(path, list)
+            and all(type(value) is str or type(value) is int for value in path)
             else (),
             locations=tuple(
                 (location["line"], location["column"])
