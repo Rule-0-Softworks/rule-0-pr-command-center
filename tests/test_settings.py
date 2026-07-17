@@ -38,11 +38,14 @@ def test_app_mode_reads_non_secret_identifiers_and_hides_key_path() -> None:
     assert "C:/secure/r0s-app.pem" not in repr(settings)
 
 
-@pytest.mark.parametrize("missing", [
-    "R0S_GITHUB_APP_CLIENT_ID",
-    "R0S_GITHUB_APP_INSTALLATION_ID",
-    "R0S_GITHUB_APP_PRIVATE_KEY_PATH",
-])
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "R0S_GITHUB_APP_CLIENT_ID",
+        "R0S_GITHUB_APP_INSTALLATION_ID",
+        "R0S_GITHUB_APP_PRIVATE_KEY_PATH",
+    ],
+)
 def test_app_mode_requires_all_credentials(missing: str) -> None:
     environ = {
         "R0S_GITHUB_AUTH_MODE": "app",

@@ -40,13 +40,10 @@ class Response(io.BytesIO):
         self.close()
 
 
-TEST_PRIVATE_KEY = (
-    rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    .private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
+TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
 )
 FIXED_NOW = datetime(2026, 7, 17, 17, 0, tzinfo=UTC)
 
@@ -85,6 +82,7 @@ def test_app_provider_requests_and_caches_installation_token(tmp_path: Path) -> 
     assert len(calls) == 1
     assert calls[0].full_url.endswith("/app/installations/123/access_tokens")
     assert calls[0].headers["Authorization"].startswith("Bearer ")
+    assert isinstance(calls[0].data, bytes)
     assert json.loads(calls[0].data) == {
         "permissions": {
             "administration": "read",
@@ -148,9 +146,7 @@ def test_app_provider_jwt_claims_use_rs256_and_short_expiry(tmp_path: Path) -> N
         captured.append(request)
         return Response(success_body())
 
-    GitHubAppTokenProvider(
-        "Iv1.example", 123, key_path, opener=opener, now=lambda: FIXED_NOW
-    )()
+    GitHubAppTokenProvider("Iv1.example", 123, key_path, opener=opener, now=lambda: FIXED_NOW)()
     encoded = captured[0].headers["Authorization"].removeprefix("Bearer ")
     header = jwt.get_unverified_header(encoded)
     claims = jwt.decode(encoded, options={"verify_signature": False})
@@ -205,9 +201,7 @@ def test_app_provider_redacts_transport_failures(tmp_path: Path) -> None:
         raise HTTPError(request.full_url, 403, "Forbidden", Message(), io.BytesIO(b"denied"))
 
     with pytest.raises(GitHubAuthError) as raised:
-        GitHubAppTokenProvider(
-            "Iv1.example", 123, key_path, opener=opener, now=lambda: FIXED_NOW
-        )()
+        GitHubAppTokenProvider("Iv1.example", 123, key_path, opener=opener, now=lambda: FIXED_NOW)()
 
     assert "Iv1.example" not in str(raised.value)
 

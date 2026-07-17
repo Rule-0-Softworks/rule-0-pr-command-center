@@ -35,7 +35,9 @@ class GitHubClient:
         self._opener = opener
 
     def _token(self) -> str:
-        return self._token_source() if callable(self._token_source) else self._token_source
+        if isinstance(self._token_source, str):
+            return self._token_source
+        return self._token_source()
 
     def _json(self, request: urllib.request.Request, token: str) -> Any:
         try:
