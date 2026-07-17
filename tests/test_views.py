@@ -1,7 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 
-from r0s_pr_read_model.models import CheckState, RequiredCheckState
+from r0s_pr_read_model.models import CheckEvidenceState, CheckState, RequiredCheckState
 
 from r0s_pr_command_center.views import (
     DashboardFilter,
@@ -196,13 +196,33 @@ def test_dashboard_escapes_titles_and_exposes_expandable_diagnostics(snapshot_fa
 
 
 def test_pr_detail_labels_all_and_required_checks_separately(snapshot_factory) -> None:
-    pr = snapshot_factory().pull_requests[0]
+    pr = replace(
+        snapshot_factory().pull_requests[0],
+        check_evidence_state=CheckEvidenceState.INCOMPLETE,
+    )
 
     html = render_pr_detail(pr)
 
     assert "All checks" in html
     assert "Required checks" in html
     assert html.index("All checks") < html.index("Required checks")
+    assert "Check evidence" in html
+    assert "incomplete" in html
+    assert "Contexts (partial)" in html
+
+
+def test_dashboard_shows_partial_evidence_in_desktop_compact_and_warning(snapshot_factory) -> None:
+    pr = replace(
+        snapshot_factory().pull_requests[0],
+        check_evidence_state=CheckEvidenceState.INCOMPLETE,
+    )
+    snapshot = replace(snapshot_factory(with_source_error=True), pull_requests=(pr,))
+
+    html = render_dashboard(snapshot, DashboardFilter())
+
+    assert "Check evidence" in html
+    assert html.count("incomplete") >= 2
+    assert "pull_requests #42" in html
 
 
 def test_dashboard_includes_post_refresh_control(snapshot_factory) -> None:

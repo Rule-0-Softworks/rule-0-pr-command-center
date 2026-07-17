@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from html import escape
 
 from r0s_pr_read_model.models import (
+    CheckEvidenceState,
     CheckState,
     DashboardSnapshot,
     PullRequest,
@@ -94,7 +95,9 @@ def render_dashboard(snapshot: DashboardSnapshot, selected: DashboardFilter) -> 
     warning = ""
     if not snapshot.is_complete:
         errors = "".join(
-            f"<li>{escape(error.repository or 'organization')}: {escape(error.message)}</li>"
+            f"<li>{escape(error.repository or 'organization')} {escape(error.stage)}"
+            f"{f' #{error.pull_request_number}' if error.pull_request_number is not None else ''}: "
+            f"{escape(error.message)}</li>"
             for error in snapshot.source_errors
         )
         warning = (
@@ -123,14 +126,16 @@ def render_pr_detail(pr: PullRequest) -> str:
         f"<li><code>{escape(item.code)}</code> {escape(item.message)}</li>"
         for item in pr.diagnostics
     )
+    contexts_heading = "Contexts (partial)" if _has_incomplete_evidence(pr) else "Contexts"
     return _page(
         f"{pr.repository} #{pr.number}",
         f"<a href='/'>Back</a><h1>{escape(pr.title)}</h1>"
         f"<dl><dt>Head SHA</dt><dd><code>{escape(pr.head_sha)}</code></dd>"
         f"<dt>All checks</dt><dd>{escape(pr.all_context_state.value)}</dd>"
-        f"<dt>Required checks</dt><dd>{escape(pr.required_check_state.value)}</dd></dl>"
+        f"<dt>Required checks</dt><dd>{escape(pr.required_check_state.value)}</dd>"
+        f"<dt>Check evidence</dt><dd>{escape(pr.check_evidence_state.value)}</dd></dl>"
         f"<ul>{diagnostics}</ul>"
-        f"<h2>Contexts</h2><ul>{contexts}</ul>",
+        f"<h2>{contexts_heading}</h2><ul>{contexts}</ul>",
     )
 
 
@@ -184,6 +189,7 @@ def _compact_card(pr: PullRequest) -> str:
         f"<h3>{escape(pr.repository)} <a href='{detail}'>#{pr.number} {escape(pr.title)}</a></h3>"
         f"<p><strong>Attention:</strong> {escape(triage_tier(pr))}</p>"
         f"<p><strong>Required checks:</strong> {escape(pr.required_check_state.value)}</p>"
+        f"<p><strong>Check evidence:</strong> {escape(pr.check_evidence_state.value)}</p>"
         f"<p><strong>Review:</strong> {escape(pr.review_decision or 'NONE')}</p>"
         "<details><summary>More details</summary>"
         f"<dl><dt>Author</dt><dd>{escape(pr.author or 'unknown')}</dd>"
@@ -225,6 +231,7 @@ def _head() -> str:
         "Merge state",
         "All checks",
         "Required checks",
+        "Check evidence",
         "Diagnostics",
     )
     return "<tr>" + "".join(f"<th scope='col'>{label}</th>" for label in labels) + "</tr>"
@@ -250,6 +257,11 @@ def _row(pr: PullRequest) -> str:
         escape(pr.merge_state_status),
         escape(pr.all_context_state.value),
         escape(pr.required_check_state.value),
+        escape(pr.check_evidence_state.value),
         f"<details><summary>why</summary><ul>{diagnostics}</ul></details>",
     )
     return "<tr>" + "".join(f"<td>{value}</td>" for value in values) + "</tr>"
+
+
+def _has_incomplete_evidence(pr: PullRequest) -> bool:
+    return pr.check_evidence_state is CheckEvidenceState.INCOMPLETE
