@@ -9,6 +9,7 @@ description = "Read-only command center for Rule-0-Softworks pull requests"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.116,<1",
+  "PyJWT[crypto]>=2.10,<3",
   "r0s-pr-read-model",
   "uvicorn>=0.35,<1",
 ]
