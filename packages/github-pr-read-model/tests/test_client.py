@@ -34,6 +34,23 @@ def test_graphql_sends_auth_without_returning_token() -> None:
     assert "secret-value" not in repr(result)
 
 
+def test_client_resolves_callable_token_once_per_request() -> None:
+    calls = 0
+
+    def token() -> str:
+        nonlocal calls
+        calls += 1
+        return "rotating-secret"
+
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(b'{"data":{"viewer":{"login":"operator"}}}')
+
+    result = GitHubClient(token, opener=opener).graphql("query { viewer { login } }", {})
+
+    assert result.data["viewer"]["login"] == "operator"
+    assert calls == 1
+
+
 def test_http_error_never_contains_token() -> None:
     def opener(request: Request, timeout: float) -> Response:
         raise urllib.error.HTTPError(
@@ -43,6 +60,20 @@ def test_http_error_never_contains_token() -> None:
     with pytest.raises(GitHubError) as raised:
         GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
     assert "secret-value" not in str(raised.value)
+
+
+def test_callable_token_is_redacted_from_errors() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        raise urllib.error.HTTPError(
+            request.full_url, 403, "rotating-secret rejected", Message(), io.BytesIO(b"denied")
+        )
+
+    with pytest.raises(GitHubError) as raised:
+        GitHubClient(lambda: "rotating-secret", opener=opener).graphql(
+            "query X { viewer { login } }", {}
+        )
+
+    assert "rotating-secret" not in str(raised.value)
 
 
 def test_graphql_partial_data_preserves_redacted_issue_metadata() -> None:

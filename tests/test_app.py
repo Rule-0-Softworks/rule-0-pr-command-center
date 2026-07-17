@@ -68,3 +68,20 @@ def test_route_inventory_has_no_github_write_surface(snapshot_factory) -> None:
     }
     assert {path for path, method in inventory if method == "POST"} == {"/refresh"}
     assert not ({"PUT", "PATCH", "DELETE"} & {method for _, method in inventory})
+
+
+def test_create_app_builds_github_client_from_token_provider(monkeypatch) -> None:
+    settings = Settings("secret")
+    provider = object()
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, token_source) -> None:
+            seen["token_source"] = token_source
+
+    monkeypatch.setattr("r0s_pr_command_center.app.create_token_provider", lambda value: provider)
+    monkeypatch.setattr("r0s_pr_command_center.app.GitHubClient", FakeClient)
+
+    create_app(settings)
+
+    assert seen["token_source"] is provider
