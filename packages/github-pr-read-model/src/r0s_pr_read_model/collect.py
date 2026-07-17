@@ -6,16 +6,18 @@ from datetime import datetime
 from typing import Any, Protocol
 from urllib.parse import quote
 
+from .client import GraphQLIssue, GraphQLResponse
 from .models import (
-    CheckState,
+    CheckEvidence,
+    CheckEvidenceState,
     DashboardSnapshot,
     Diagnostic,
     PullRequest,
     RequiredCheckState,
     SourceError,
 )
-from .normalize import normalize_pull_request
-from .queries import BRANCH_PROTECTION, MORE_CONTEXTS, PULL_REQUESTS, REPOSITORIES
+from .normalize import check_evidence_from_rollup, normalize_pull_request
+from .queries import BRANCH_PROTECTION, CHECK_ROLLUP, PULL_REQUESTS, REPOSITORIES
 from .required_checks import (
     EffectiveRequirements,
     apply_required_requirements,
@@ -24,18 +26,37 @@ from .required_checks import (
 
 
 class GitHubReadClient(Protocol):
-    def graphql(self, query: str, variables: dict[str, object]) -> dict[str, Any]: ...
+    def graphql(self, query: str, variables: dict[str, object]) -> GraphQLResponse: ...
 
     def rest_json(self, path: str) -> object: ...
 
 
-def _connection(value: dict[str, Any]) -> tuple[list[dict[str, Any]], bool, str | None]:
+def _connection(value: Mapping[str, Any]) -> tuple[list[dict[str, Any]], bool, str | None]:
     page = value["pageInfo"]
     return list(value["nodes"]), bool(page["hasNextPage"]), page.get("endCursor")
 
 
 def _message(error: Exception) -> str:
     return str(error)[:300]
+
+
+def _source_errors_from_issues(
+    repository: str | None,
+    stage: str,
+    issues: tuple[GraphQLIssue, ...],
+    pull_request_number: int | None = None,
+) -> list[SourceError]:
+    return [
+        SourceError(
+            repository=repository,
+            stage=stage,
+            message=issue.message,
+            pull_request_number=pull_request_number,
+            graphql_path=issue.path,
+            graphql_locations=issue.locations,
+        )
+        for issue in issues
+    ]
 
 
 def collect_repositories(
@@ -46,8 +67,11 @@ def collect_repositories(
     cursor: str | None = None
     while True:
         try:
-            data = client.graphql(REPOSITORIES, {"org": organization, "cursor": cursor})
-            nodes, has_next, cursor = _connection(data["organization"]["repositories"])
+            response = client.graphql(REPOSITORIES, {"org": organization, "cursor": cursor})
+            errors.extend(_source_errors_from_issues(None, "repositories", response.errors))
+            nodes, has_next, cursor = _connection(
+                response.data["organization"]["repositories"]
+            )
             repositories.extend(str(node["nameWithOwner"]) for node in nodes)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(None, "repositories", _message(error)))
@@ -57,41 +81,173 @@ def collect_repositories(
     return repositories, errors
 
 
-def collect_remaining_contexts(
-    client: GitHubReadClient, repository: str, raw_pr: dict[str, Any]
-) -> list[dict[str, Any]]:
-    owner, name = repository.split("/", 1)
-    commit = raw_pr["commits"]["nodes"][-1]["commit"]
-    connection = commit["statusCheckRollup"]["contexts"]
-    contexts, has_next, cursor = _connection(connection)
-    while has_next:
-        data = client.graphql(
-            MORE_CONTEXTS,
-            {"owner": owner, "name": name, "oid": commit["oid"], "cursor": cursor},
+def _unavailable_check_evidence(messages: list[str]) -> CheckEvidence:
+    denied = any(
+        "forbidden" in message.casefold() or "denied" in message.casefold()
+        for message in messages
+    )
+    if denied:
+        diagnostic = Diagnostic(
+            "checks.rollup_forbidden",
+            "status check rollup access was denied",
+            "rollup",
         )
-        page = data["repository"]["object"]["statusCheckRollup"]["contexts"]
-        nodes, has_next, cursor = _connection(page)
-        contexts.extend(nodes)
-    return contexts
+    else:
+        diagnostic = Diagnostic(
+            "checks.enrichment_unavailable",
+            "status check rollup enrichment was unavailable",
+            "rollup",
+        )
+    return CheckEvidence(CheckEvidenceState.UNAVAILABLE, (), diagnostic)
 
 
-def _replace_contexts(raw_pr: dict[str, Any], contexts: list[dict[str, Any]]) -> None:
-    connection = raw_pr["commits"]["nodes"][-1]["commit"]["statusCheckRollup"]["contexts"]
-    connection["nodes"] = contexts
-    connection["pageInfo"] = {"hasNextPage": False, "endCursor": None}
-
-
-def _mark_incomplete(pr: PullRequest, error: Exception) -> PullRequest:
-    diagnostic = Diagnostic(
-        "checks.pagination_incomplete",
-        f"not every status context could be retrieved: {_message(error)}",
-        "contexts",
+def _incomplete_check_evidence(
+    raw_contexts: list[dict[str, Any]], code: str, message: str, source: str
+) -> CheckEvidence:
+    mapped = check_evidence_from_rollup({"contexts": {"nodes": raw_contexts}})
+    return CheckEvidence(
+        CheckEvidenceState.INCOMPLETE,
+        mapped.contexts,
+        Diagnostic(code, message, source),
     )
-    return replace(
-        pr,
-        all_context_state=CheckState.UNCLASSIFIED,
-        diagnostics=(*pr.diagnostics, diagnostic),
+
+
+def _check_rollup(response: GraphQLResponse) -> object:
+    return response.data["repository"]["object"]["statusCheckRollup"]
+
+
+def _collect_check_evidence(
+    client: GitHubReadClient,
+    repository: str,
+    oid: str,
+    pull_request_number: int,
+) -> tuple[CheckEvidence, list[SourceError]]:
+    owner, name = repository.split("/", 1)
+    variables: dict[str, object] = {
+        "owner": owner,
+        "name": name,
+        "oid": oid,
+        "cursor": None,
+    }
+    try:
+        response = client.graphql(CHECK_ROLLUP, variables)
+    except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
+        return _unavailable_check_evidence([str(error)]), [
+            SourceError(repository, "check_rollup", _message(error), pull_request_number)
+        ]
+
+    errors = _source_errors_from_issues(
+        repository,
+        "check_rollup",
+        response.errors,
+        pull_request_number,
     )
+    try:
+        rollup = _check_rollup(response)
+        evidence = check_evidence_from_rollup(rollup)
+        if evidence.state is CheckEvidenceState.NO_ROLLUP:
+            if response.errors:
+                return _unavailable_check_evidence(
+                    [issue.message for issue in response.errors]
+                ), errors
+            return evidence, errors
+        if evidence.state is CheckEvidenceState.UNAVAILABLE:
+            if response.errors:
+                return _unavailable_check_evidence(
+                    [issue.message for issue in response.errors]
+                ), errors
+            errors.append(
+                SourceError(
+                    repository,
+                    "check_rollup",
+                    evidence.diagnostic.message
+                    if evidence.diagnostic is not None
+                    else "status check rollup was unavailable",
+                    pull_request_number,
+                )
+            )
+            return evidence, errors
+        connection = rollup["contexts"]
+        raw_contexts, has_next, cursor = _connection(connection)
+    except (KeyError, TypeError, ValueError, RuntimeError) as error:
+        if not errors:
+            errors.append(
+                SourceError(repository, "check_rollup", _message(error), pull_request_number)
+            )
+        messages = [issue.message for issue in response.errors] or [str(error)]
+        return _unavailable_check_evidence(messages), errors
+
+    if response.errors:
+        return (
+            _incomplete_check_evidence(
+                raw_contexts,
+                "checks.rollup_partial",
+                "status check rollup returned partial context evidence",
+                "rollup",
+            ),
+            errors,
+        )
+
+    while has_next:
+        try:
+            response = client.graphql(CHECK_ROLLUP, {**variables, "cursor": cursor})
+        except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
+            errors.append(
+                SourceError(repository, "check_contexts", _message(error), pull_request_number)
+            )
+            return (
+                _incomplete_check_evidence(
+                    raw_contexts,
+                    "checks.pagination_incomplete",
+                    "not every status context could be retrieved",
+                    "contexts",
+                ),
+                errors,
+            )
+
+        page_errors = _source_errors_from_issues(
+            repository,
+            "check_contexts",
+            response.errors,
+            pull_request_number,
+        )
+        errors.extend(page_errors)
+        try:
+            rollup = _check_rollup(response)
+            page_evidence = check_evidence_from_rollup(rollup)
+            if page_evidence.state not in {
+                CheckEvidenceState.OBSERVED,
+                CheckEvidenceState.EMPTY_ROLLUP,
+            }:
+                raise ValueError("status check context page was unavailable")
+            page_contexts, has_next, cursor = _connection(rollup["contexts"])
+            raw_contexts.extend(page_contexts)
+        except (KeyError, TypeError, ValueError, RuntimeError) as error:
+            if not page_errors:
+                errors.append(
+                    SourceError(repository, "check_contexts", _message(error), pull_request_number)
+                )
+            return (
+                _incomplete_check_evidence(
+                    raw_contexts,
+                    "checks.pagination_incomplete",
+                    "not every status context could be retrieved",
+                    "contexts",
+                ),
+                errors,
+            )
+        if response.errors:
+            return (
+                _incomplete_check_evidence(
+                    raw_contexts,
+                    "checks.pagination_incomplete",
+                    "not every status context could be retrieved",
+                    "contexts",
+                ),
+                errors,
+            )
+
+    return check_evidence_from_rollup({"contexts": {"nodes": raw_contexts}}), errors
 
 
 def _pull_request_stage(raw_pr: object) -> str:
@@ -137,11 +293,13 @@ def _requirements_for_branch(
     except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
         return _unavailable_requirements(error)
     try:
-        data = client.graphql(
+        response = client.graphql(
             BRANCH_PROTECTION,
             {"owner": owner, "name": name, "qualifiedName": f"refs/heads/{branch}"},
         )
-        branch_protection = data["repository"]["ref"]["branchProtectionRule"]
+        if response.errors:
+            raise RuntimeError(response.errors[0].message)
+        branch_protection = response.data["repository"]["ref"]["branchProtectionRule"]
     except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
         return _unavailable_requirements(error)
     return extract_effective_requirements(effective_rules, branch_protection)
@@ -172,29 +330,31 @@ def collect_repository_prs(
     cursor: str | None = None
     while True:
         try:
-            data = client.graphql(
+            response = client.graphql(
                 PULL_REQUESTS,
                 {"owner": owner, "name": name, "cursor": cursor},
             )
-            nodes, has_next, cursor = _connection(data["repository"]["pullRequests"])
+            errors.extend(
+                _source_errors_from_issues(repository, "pull_requests", response.errors)
+            )
+            nodes, has_next, cursor = _connection(
+                response.data["repository"]["pullRequests"]
+            )
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(repository, "pull_requests", _message(error)))
             break
         for raw_pr in nodes:
-            contexts_complete = True
-            context_error: Exception | None = None
             try:
-                commit = raw_pr["commits"]["nodes"][-1]["commit"]
-                rollup = commit.get("statusCheckRollup")
-                page = rollup.get("contexts", {}).get("pageInfo", {}) if rollup else {}
-                if page.get("hasNextPage"):
-                    contexts = collect_remaining_contexts(client, repository, raw_pr)
-                    _replace_contexts(raw_pr, contexts)
-            except (KeyError, TypeError, ValueError, RuntimeError) as error:
-                context_error = error
-
-            try:
-                pr = normalize_pull_request(repository, raw_pr)
+                pull_request_number = int(raw_pr["number"])
+                oid = str(raw_pr["headRefOid"])
+                evidence, check_errors = _collect_check_evidence(
+                    client,
+                    repository,
+                    oid,
+                    pull_request_number,
+                )
+                errors.extend(check_errors)
+                pr = normalize_pull_request(repository, raw_pr, evidence)
             except (AttributeError, KeyError, TypeError, ValueError, RuntimeError):
                 errors.append(
                     SourceError(
@@ -205,22 +365,15 @@ def collect_repository_prs(
                 )
                 continue
 
-            if context_error is not None:
-                pr = _mark_incomplete(pr, context_error)
-                contexts_complete = False
-                errors.append(
-                    SourceError(
-                        repository,
-                        f"contexts:#{pr.number}",
-                        _message(context_error),
-                    )
-                )
             requirements = requirements_by_branch.get(pr.base_ref_name)
             if requirements is None:
                 requirements = _requirements_for_branch(client, owner, name, pr.base_ref_name)
                 requirements_by_branch[pr.base_ref_name] = requirements
             pr, source_error = apply_required_requirements(pr, requirements)
-            if not contexts_complete:
+            if evidence.state in {
+                CheckEvidenceState.UNAVAILABLE,
+                CheckEvidenceState.INCOMPLETE,
+            }:
                 pr = _mark_required_contexts_incomplete(pr)
             pull_requests.append(pr)
             if source_error is not None:
