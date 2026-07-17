@@ -30,8 +30,7 @@ class GitHubAuthError(RuntimeError):
 
 
 class TokenProvider(Protocol):
-    def __call__(self) -> str:
-        raise NotImplementedError
+    def __call__(self) -> str: ...
 
 
 @dataclass(frozen=True)

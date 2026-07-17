@@ -21,6 +21,11 @@ def test_missing_credential_fails_with_non_secret_guidance() -> None:
         Settings.from_environment({})
 
 
+def test_invalid_auth_mode_fails_with_safe_guidance() -> None:
+    with pytest.raises(RuntimeError, match="must be token or app"):
+        Settings.from_environment({"R0S_GITHUB_AUTH_MODE": "unsupported"})
+
+
 def test_app_mode_reads_non_secret_identifiers_and_hides_key_path() -> None:
     from r0s_pr_command_center.settings import GitHubAuthMode
 
@@ -57,3 +62,15 @@ def test_app_mode_requires_all_credentials(missing: str) -> None:
 
     with pytest.raises(RuntimeError, match="GitHub App mode requires"):
         Settings.from_environment(environ)
+
+
+def test_app_mode_requires_integer_installation_id() -> None:
+    with pytest.raises(RuntimeError, match="integer installation ID"):
+        Settings.from_environment(
+            {
+                "R0S_GITHUB_AUTH_MODE": "app",
+                "R0S_GITHUB_APP_CLIENT_ID": "Iv1.example",
+                "R0S_GITHUB_APP_INSTALLATION_ID": "not-an-integer",
+                "R0S_GITHUB_APP_PRIVATE_KEY_PATH": "C:/secure/r0s-app.pem",
+            }
+        )

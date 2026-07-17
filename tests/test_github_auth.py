@@ -10,6 +10,7 @@ from email.message import Message
 from pathlib import Path
 from time import sleep
 from types import TracebackType
+from typing import cast
 from urllib.error import HTTPError
 from urllib.request import Request
 
@@ -19,6 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from r0s_pr_command_center.github_auth import (
+    INSTALLATION_PERMISSIONS,
     GitHubAppTokenProvider,
     GitHubAuthError,
     StaticTokenProvider,
@@ -193,6 +195,31 @@ def test_app_provider_rejects_malformed_or_write_capable_responses(
     assert base64.b64encode(TEST_PRIVATE_KEY).decode() not in str(raised.value)
 
 
+@pytest.mark.parametrize(
+    "response_body",
+    [
+        [],
+        {"token": "installation-secret", "expires_at": "2026-07-17T18:00:00Z"},
+        {
+            "token": "installation-secret",
+            "expires_at": "2026-07-17T18:00:00",
+            "permissions": INSTALLATION_PERMISSIONS,
+        },
+    ],
+)
+def test_app_provider_rejects_invalid_response_shapes(
+    tmp_path: Path, response_body: object
+) -> None:
+    key_path = tmp_path / "app.pem"
+    key_path.write_bytes(TEST_PRIVATE_KEY)
+
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(json.dumps(response_body).encode())
+
+    with pytest.raises(GitHubAuthError):
+        GitHubAppTokenProvider("Iv1.example", 123, key_path, opener=opener, now=lambda: FIXED_NOW)()
+
+
 def test_app_provider_redacts_transport_failures(tmp_path: Path) -> None:
     key_path = tmp_path / "app.pem"
     key_path.write_bytes(TEST_PRIVATE_KEY)
@@ -225,4 +252,24 @@ def test_token_provider_factory_requires_complete_app_settings() -> None:
     settings = Settings(github_auth_mode=GitHubAuthMode.APP)
 
     with pytest.raises(GitHubAuthError, match="GitHub App"):
+        create_token_provider(settings)
+
+
+def test_token_provider_factory_builds_complete_app_provider(tmp_path: Path) -> None:
+    provider = create_token_provider(
+        Settings(
+            github_auth_mode=GitHubAuthMode.APP,
+            github_app_client_id="Iv1.example",
+            github_app_installation_id=123,
+            github_app_private_key_path=tmp_path / "app.pem",
+        )
+    )
+
+    assert isinstance(provider, GitHubAppTokenProvider)
+
+
+def test_token_provider_factory_rejects_unsupported_mode() -> None:
+    settings = Settings(github_auth_mode=cast(GitHubAuthMode, "unsupported"))
+
+    with pytest.raises(GitHubAuthError, match="Unsupported"):
         create_token_provider(settings)

@@ -76,6 +76,36 @@ def test_callable_token_is_redacted_from_errors() -> None:
     assert "rotating-secret" not in str(raised.value)
 
 
+def test_rest_json_resolves_callable_token_once_per_request() -> None:
+    calls = 0
+    seen: dict[str, str] = {}
+
+    def token() -> str:
+        nonlocal calls
+        calls += 1
+        return "rotating-secret"
+
+    def opener(request: Request, timeout: float) -> Response:
+        seen["authorization"] = request.headers["Authorization"]
+        return Response(b'{"ok":true}')
+
+    result = GitHubClient(token, opener=opener).rest_json("/repos/Rule-0-Softworks/example")
+
+    assert result == {"ok": True}
+    assert seen["authorization"] == "Bearer rotating-secret"
+    assert calls == 1
+
+
+def test_url_error_never_contains_callable_token() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        raise urllib.error.URLError("rotating-secret unavailable")
+
+    with pytest.raises(GitHubError) as raised:
+        GitHubClient(lambda: "rotating-secret", opener=opener).rest_json("/repos/example")
+
+    assert "rotating-secret" not in str(raised.value)
+
+
 def test_graphql_partial_data_preserves_redacted_issue_metadata() -> None:
     def opener(request: Request, timeout: float) -> Response:
         return Response(
@@ -103,6 +133,15 @@ def test_graphql_issue_discards_boolean_location_coordinates() -> None:
     result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
 
     assert result.errors[0].locations == ((4, 2),)
+
+
+def test_graphql_issue_discards_non_mapping_locations() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(b'{"data":{},"errors":[{"message":"denied","locations":[null]}]}')
+
+    result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+
+    assert result.errors[0].locations == ()
 
 
 def test_graphql_issue_discards_path_with_boolean_segment() -> None:
