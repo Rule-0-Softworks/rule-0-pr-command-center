@@ -77,8 +77,7 @@ def test_graphql_issue_discards_boolean_location_coordinates() -> None:
 def test_graphql_issue_discards_path_with_boolean_segment() -> None:
     def opener(request: Request, timeout: float) -> Response:
         return Response(
-            b'{"data":{},"errors":[{"message":"denied","path":['
-            b'"repository",true,"pullRequests"]}]}'
+            b'{"data":{},"errors":[{"message":"denied","path":["repository",true,"pullRequests"]}]}'
         )
 
     result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})

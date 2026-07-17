@@ -120,9 +120,7 @@ def _rollup_response(
 
 
 def _null_rollup_response():
-    return GraphQLResponse(
-        {"repository": {"object": {"statusCheckRollup": None}}}
-    )
+    return GraphQLResponse({"repository": {"object": {"statusCheckRollup": None}}})
 
 
 def _forbidden_issue(number=7):
@@ -264,9 +262,7 @@ def test_inventory_partial_response_preserves_accessible_prs(fixtures) -> None:
         ((10, 9),),
     )
     inventory = GraphQLResponse(fixtures["pull_requests_page"]["data"], (issue,))
-    client = ScriptedClient(
-        [_one_repository(fixtures), inventory, _rollup_response()]
-    )
+    client = ScriptedClient([_one_repository(fixtures), inventory, _rollup_response()])
 
     snapshot = collect_snapshot(client, "Rule-0-Softworks", NOW)
 
@@ -322,9 +318,7 @@ def test_genuine_null_rollup_is_distinct_from_unavailable(fixtures) -> None:
 
 
 def test_empty_rollup_is_distinct_from_unavailable(fixtures) -> None:
-    client = ScriptedClient(
-        [_one_repository(fixtures), _inventory(fixtures), _rollup_response([])]
-    )
+    client = ScriptedClient([_one_repository(fixtures), _inventory(fixtures), _rollup_response([])])
 
     snapshot = collect_snapshot(client, "Rule-0-Softworks", NOW)
     pr = snapshot.pull_requests[0]

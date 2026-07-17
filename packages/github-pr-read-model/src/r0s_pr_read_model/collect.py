@@ -69,9 +69,7 @@ def collect_repositories(
         try:
             response = client.graphql(REPOSITORIES, {"org": organization, "cursor": cursor})
             errors.extend(_source_errors_from_issues(None, "repositories", response.errors))
-            nodes, has_next, cursor = _connection(
-                response.data["organization"]["repositories"]
-            )
+            nodes, has_next, cursor = _connection(response.data["organization"]["repositories"])
             repositories.extend(str(node["nameWithOwner"]) for node in nodes)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(None, "repositories", _message(error)))
@@ -83,8 +81,7 @@ def collect_repositories(
 
 def _unavailable_check_evidence(messages: list[str]) -> CheckEvidence:
     denied = any(
-        "forbidden" in message.casefold() or "denied" in message.casefold()
-        for message in messages
+        "forbidden" in message.casefold() or "denied" in message.casefold() for message in messages
     )
     if denied:
         diagnostic = Diagnostic(
@@ -338,12 +335,8 @@ def collect_repository_prs(
                 PULL_REQUESTS,
                 {"owner": owner, "name": name, "cursor": cursor},
             )
-            errors.extend(
-                _source_errors_from_issues(repository, "pull_requests", response.errors)
-            )
-            nodes, has_next, cursor = _connection(
-                response.data["repository"]["pullRequests"]
-            )
+            errors.extend(_source_errors_from_issues(repository, "pull_requests", response.errors))
+            nodes, has_next, cursor = _connection(response.data["repository"]["pullRequests"])
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(repository, "pull_requests", _message(error)))
             break
