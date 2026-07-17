@@ -30,7 +30,13 @@ CHECK_CONTEXTS = [
 
 
 class ScriptedClient:
-    def __init__(self, responses, rest_responses=(), branch_protection=None):
+    def __init__(
+        self,
+        responses,
+        rest_responses=(),
+        branch_protection=None,
+        branch_protection_errors=(),
+    ):
         self.responses = iter(responses)
         self.rest_responses = iter(rest_responses)
         self.rest_paths = []
@@ -39,12 +45,14 @@ class ScriptedClient:
             "requiresStatusChecks": False,
             "requiredStatusChecks": [],
         }
+        self.branch_protection_errors = tuple(branch_protection_errors)
 
     def graphql(self, query, variables):
         self.graphql_calls.append((query, variables))
         if "query BranchProtection" in query:
             return GraphQLResponse(
-                {"repository": {"ref": {"branchProtectionRule": self.branch_protection}}}
+                {"repository": {"ref": {"branchProtectionRule": self.branch_protection}}},
+                self.branch_protection_errors,
             )
         response = next(self.responses)
         if isinstance(response, Exception):
@@ -182,6 +190,33 @@ def test_collection_reads_every_pr_page(fixtures) -> None:
     assert [pr.number for pr in snapshot.pull_requests] == [7, 8]
 
 
+@pytest.mark.parametrize("cursor", [None, "pr-cursor"])
+def test_pr_pagination_stops_on_missing_or_repeated_cursor(fixtures, cursor) -> None:
+    first = _inventory(fixtures)
+    first["data"]["repository"]["pullRequests"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": cursor,
+    }
+    responses = [_one_repository(fixtures), first, _rollup_response()]
+    if cursor is not None:
+        repeated = deepcopy(fixtures["pull_requests_next_page"])
+        repeated["data"]["repository"]["pullRequests"]["pageInfo"] = {
+            "hasNextPage": True,
+            "endCursor": cursor,
+        }
+        responses.extend([repeated, _null_rollup_response()])
+    client = ScriptedClient(responses)
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", NOW)
+
+    expected_numbers = [7] if cursor is None else [7, 8]
+    assert [pr.number for pr in snapshot.pull_requests] == expected_numbers
+    pagination_error = next(
+        item for item in snapshot.source_errors if item.stage == "pull_requests"
+    )
+    assert "pagination cursor" in pagination_error.message
+
+
 def test_collection_reads_every_repository_page(fixtures) -> None:
     first = deepcopy(fixtures["repositories_page"])
     first_repositories = first["organization"]["repositories"]
@@ -207,6 +242,33 @@ def test_collection_reads_every_repository_page(fixtures) -> None:
 
     assert snapshot.repository_count == 2
     assert [pr.number for pr in snapshot.pull_requests] == [7]
+
+
+@pytest.mark.parametrize("cursor", [None, "repository-cursor"])
+def test_repository_pagination_stops_on_missing_or_repeated_cursor(fixtures, cursor) -> None:
+    first = _one_repository(fixtures)
+    first["organization"]["repositories"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": cursor,
+    }
+    responses = [first]
+    if cursor is not None:
+        repeated = _one_repository(fixtures)
+        repeated["organization"]["repositories"]["nodes"] = []
+        repeated["organization"]["repositories"]["pageInfo"] = {
+            "hasNextPage": True,
+            "endCursor": cursor,
+        }
+        responses.append(repeated)
+    responses.extend([_inventory(fixtures), _rollup_response()])
+    client = ScriptedClient(responses)
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", NOW)
+
+    assert snapshot.repository_count == 1
+    assert [pr.number for pr in snapshot.pull_requests] == [7]
+    pagination_error = next(item for item in snapshot.source_errors if item.stage == "repositories")
+    assert "pagination cursor" in pagination_error.message
 
 
 def test_forbidden_enrichment_does_not_erase_accessible_inventory(fixtures) -> None:
@@ -352,6 +414,40 @@ def test_collection_reads_every_context_page(fixtures) -> None:
     assert rollup_calls[1]["cursor"] == "context-cursor"
 
 
+@pytest.mark.parametrize("cursor", [None, "context-cursor"])
+def test_context_pagination_stops_on_missing_or_repeated_cursor(fixtures, cursor) -> None:
+    responses = [
+        _one_repository(fixtures),
+        _inventory(fixtures),
+        _rollup_response(CHECK_CONTEXTS, has_next=True, cursor=cursor),
+    ]
+    if cursor is not None:
+        repeated = deepcopy(fixtures["contexts_next_page"])
+        repeated["data"]["repository"]["object"]["statusCheckRollup"]["contexts"]["pageInfo"] = {
+            "hasNextPage": True,
+            "endCursor": cursor,
+        }
+        responses.append(repeated)
+    client = ScriptedClient(responses)
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", NOW)
+    pr = snapshot.pull_requests[0]
+
+    expected_contexts = ["Quality Gate", "legacy-ci"]
+    if cursor is not None:
+        expected_contexts.append("second-page")
+    assert [context.name for context in pr.contexts] == expected_contexts
+    assert pr.check_evidence_state is CheckEvidenceState.INCOMPLETE
+    assert pr.all_context_state is CheckState.UNKNOWN
+    assert pr.required_check_state is RequiredCheckState.UNKNOWN
+    assert _diagnostic(pr, "checks.pagination_incomplete")
+    pagination_error = next(
+        item for item in snapshot.source_errors if item.stage == "check_contexts"
+    )
+    assert pagination_error.pull_request_number == 7
+    assert "pagination cursor" in pagination_error.message
+
+
 def test_context_page_error_keeps_retained_contexts_as_incomplete(fixtures) -> None:
     passing_context = deepcopy(CHECK_CONTEXTS[0])
     passing_context["conclusion"] = "SUCCESS"
@@ -432,6 +528,43 @@ def test_collection_unions_ruleset_and_branch_protection_checks(fixtures) -> Non
 
     assert snapshot.pull_requests[0].required_check_state == "failing"
     assert any("query BranchProtection" in query for query, _ in client.graphql_calls)
+
+
+def test_branch_protection_errors_preserve_every_graphql_issue(fixtures) -> None:
+    passing_context = deepcopy(CHECK_CONTEXTS[0])
+    passing_context["conclusion"] = "SUCCESS"
+    issues = (
+        GraphQLIssue(
+            "branch protection field was denied",
+            ("repository", "ref", "branchProtectionRule"),
+            ((12, 9),),
+        ),
+        GraphQLIssue(
+            "required status checks were denied",
+            ("repository", "ref", "branchProtectionRule", "requiredStatusChecks"),
+            ((16, 13),),
+        ),
+    )
+    effective_rules = [
+        rule for rule in fixtures["effective_rules"] if rule["type"] != "merge_queue"
+    ]
+    client = ScriptedClient(
+        [_one_repository(fixtures), _inventory(fixtures), _rollup_response([passing_context])],
+        [effective_rules],
+        branch_protection_errors=issues,
+    )
+
+    snapshot = collect_snapshot(client, "Rule-0-Softworks", NOW)
+    pr = snapshot.pull_requests[0]
+    branch_errors = [item for item in snapshot.source_errors if item.stage == "branch_protection"]
+
+    assert pr.required_check_state is RequiredCheckState.UNKNOWN
+    assert _diagnostic(pr, "required.rules_unavailable")
+    assert [item.message for item in branch_errors] == [issue.message for issue in issues]
+    assert [item.graphql_path for item in branch_errors] == [issue.path for issue in issues]
+    assert [item.graphql_locations for item in branch_errors] == [
+        issue.locations for issue in issues
+    ]
 
 
 def test_malformed_pr_does_not_block_other_prs(fixtures) -> None:

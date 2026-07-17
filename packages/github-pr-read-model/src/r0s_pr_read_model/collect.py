@@ -36,6 +36,14 @@ def _connection(value: Mapping[str, Any]) -> tuple[list[dict[str, Any]], bool, s
     return list(value["nodes"]), bool(page["hasNextPage"]), page.get("endCursor")
 
 
+def _continuation_cursor(current: str | None, next_cursor: str | None) -> str:
+    if next_cursor is None:
+        raise ValueError("pagination cursor was missing")
+    if next_cursor == current:
+        raise ValueError("pagination cursor did not advance")
+    return next_cursor
+
+
 def _message(error: Exception) -> str:
     return str(error)[:300]
 
@@ -69,12 +77,15 @@ def collect_repositories(
         try:
             response = client.graphql(REPOSITORIES, {"org": organization, "cursor": cursor})
             errors.extend(_source_errors_from_issues(None, "repositories", response.errors))
-            nodes, has_next, cursor = _connection(response.data["organization"]["repositories"])
+            nodes, has_next, next_cursor = _connection(
+                response.data["organization"]["repositories"]
+            )
             repositories.extend(str(node["nameWithOwner"]) for node in nodes)
+            if not has_next:
+                break
+            cursor = _continuation_cursor(cursor, next_cursor)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(None, "repositories", _message(error)))
-            break
-        if not has_next:
             break
     return repositories, errors
 
@@ -120,11 +131,12 @@ def _collect_check_evidence(
     pull_request_number: int,
 ) -> tuple[CheckEvidence, list[SourceError]]:
     owner, name = repository.split("/", 1)
+    cursor: str | None = None
     variables: dict[str, object] = {
         "owner": owner,
         "name": name,
         "oid": oid,
-        "cursor": None,
+        "cursor": cursor,
     }
     try:
         response = client.graphql(CHECK_ROLLUP, variables)
@@ -166,7 +178,7 @@ def _collect_check_evidence(
             return evidence, errors
         rollup_data = cast(Mapping[str, Any], rollup)
         connection = cast(Mapping[str, Any], rollup_data["contexts"])
-        raw_contexts, has_next, cursor = _connection(connection)
+        raw_contexts, has_next, next_cursor = _connection(connection)
     except (KeyError, TypeError, ValueError, RuntimeError) as error:
         if not errors:
             errors.append(
@@ -185,6 +197,23 @@ def _collect_check_evidence(
             ),
             errors,
         )
+
+    if has_next:
+        try:
+            cursor = _continuation_cursor(cursor, next_cursor)
+        except ValueError as error:
+            errors.append(
+                SourceError(repository, "check_contexts", _message(error), pull_request_number)
+            )
+            return (
+                _incomplete_check_evidence(
+                    raw_contexts,
+                    "checks.pagination_incomplete",
+                    "not every status context could be retrieved",
+                    "contexts",
+                ),
+                errors,
+            )
 
     while has_next:
         try:
@@ -219,7 +248,7 @@ def _collect_check_evidence(
             }:
                 raise ValueError("status check context page was unavailable")
             rollup_data = cast(Mapping[str, Any], rollup)
-            page_contexts, has_next, cursor = _connection(
+            page_contexts, has_next, next_cursor = _connection(
                 cast(Mapping[str, Any], rollup_data["contexts"])
             )
             raw_contexts.extend(page_contexts)
@@ -237,6 +266,27 @@ def _collect_check_evidence(
                 ),
                 errors,
             )
+        if has_next:
+            try:
+                cursor = _continuation_cursor(cursor, next_cursor)
+            except ValueError as error:
+                errors.append(
+                    SourceError(
+                        repository,
+                        "check_contexts",
+                        _message(error),
+                        pull_request_number,
+                    )
+                )
+                return (
+                    _incomplete_check_evidence(
+                        raw_contexts,
+                        "checks.pagination_incomplete",
+                        "not every status context could be retrieved",
+                        "contexts",
+                    ),
+                    errors,
+                )
         if response.errors:
             return (
                 _incomplete_check_evidence(
@@ -274,7 +324,7 @@ def _requirements_for_branch(
     owner: str,
     name: str,
     branch: str,
-) -> EffectiveRequirements:
+) -> tuple[EffectiveRequirements, list[SourceError]]:
     try:
         effective_rules: object = []
         page = 1
@@ -292,18 +342,24 @@ def _requirements_for_branch(
                 break
             page += 1
     except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
-        return _unavailable_requirements(error)
+        return _unavailable_requirements(error), []
     try:
         response = client.graphql(
             BRANCH_PROTECTION,
             {"owner": owner, "name": name, "qualifiedName": f"refs/heads/{branch}"},
         )
         if response.errors:
-            raise RuntimeError(response.errors[0].message)
+            return _unavailable_requirements(RuntimeError(response.errors[0].message)), (
+                _source_errors_from_issues(
+                    f"{owner}/{name}",
+                    "branch_protection",
+                    response.errors,
+                )
+            )
         branch_protection = response.data["repository"]["ref"]["branchProtectionRule"]
     except (KeyError, TypeError, ValueError, RuntimeError, TimeoutError) as error:
-        return _unavailable_requirements(error)
-    return extract_effective_requirements(effective_rules, branch_protection)
+        return _unavailable_requirements(error), []
+    return extract_effective_requirements(effective_rules, branch_protection), []
 
 
 def _mark_required_contexts_incomplete(pr: PullRequest) -> PullRequest:
@@ -336,7 +392,7 @@ def collect_repository_prs(
                 {"owner": owner, "name": name, "cursor": cursor},
             )
             errors.extend(_source_errors_from_issues(repository, "pull_requests", response.errors))
-            nodes, has_next, cursor = _connection(response.data["repository"]["pullRequests"])
+            nodes, has_next, next_cursor = _connection(response.data["repository"]["pullRequests"])
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             errors.append(SourceError(repository, "pull_requests", _message(error)))
             break
@@ -364,8 +420,11 @@ def collect_repository_prs(
 
             requirements = requirements_by_branch.get(pr.base_ref_name)
             if requirements is None:
-                requirements = _requirements_for_branch(client, owner, name, pr.base_ref_name)
+                requirements, requirement_errors = _requirements_for_branch(
+                    client, owner, name, pr.base_ref_name
+                )
                 requirements_by_branch[pr.base_ref_name] = requirements
+                errors.extend(requirement_errors)
             pr, source_error = apply_required_requirements(pr, requirements)
             if evidence.state in {
                 CheckEvidenceState.UNAVAILABLE,
@@ -376,6 +435,11 @@ def collect_repository_prs(
             if source_error is not None:
                 errors.append(source_error)
         if not has_next:
+            break
+        try:
+            cursor = _continuation_cursor(cursor, next_cursor)
+        except ValueError as error:
+            errors.append(SourceError(repository, "pull_requests", _message(error)))
             break
     return pull_requests, errors
 
