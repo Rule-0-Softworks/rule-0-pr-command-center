@@ -4,7 +4,14 @@ from collections.abc import Mapping
 from typing import cast
 
 from .classify import classify_all_contexts, classify_merge
-from .models import CheckContext, PullRequest, RequiredCheckState
+from .models import (
+    CheckContext,
+    CheckEvidence,
+    CheckEvidenceState,
+    Diagnostic,
+    PullRequest,
+    RequiredCheckState,
+)
 
 
 def _object_mapping(value: object) -> Mapping[str, object] | None:
@@ -33,12 +40,15 @@ def _context(raw: Mapping[str, object]) -> CheckContext:
     )
 
 
-def normalize_pull_request(repository: str, raw: Mapping[str, object]) -> PullRequest:
-    commits = raw.get("commits")
-    nodes = commits.get("nodes", []) if isinstance(commits, Mapping) else []
-    last_node = nodes[-1] if isinstance(nodes, list) and nodes else None
-    commit = last_node.get("commit", {}) if isinstance(last_node, Mapping) else {}
-    rollup = commit.get("statusCheckRollup") if isinstance(commit, Mapping) else None
+def check_evidence_from_rollup(rollup: object) -> CheckEvidence:
+    if rollup is None:
+        return CheckEvidence(CheckEvidenceState.NO_ROLLUP, ())
+    if not isinstance(rollup, Mapping):
+        return CheckEvidence(
+            CheckEvidenceState.UNAVAILABLE,
+            (),
+            Diagnostic("checks.rollup_malformed", "status check rollup was malformed", "rollup"),
+        )
     contexts_connection = rollup.get("contexts") if isinstance(rollup, Mapping) else None
     raw_context_nodes = (
         contexts_connection.get("nodes", []) if isinstance(contexts_connection, Mapping) else []
@@ -47,7 +57,16 @@ def normalize_pull_request(repository: str, raw: Mapping[str, object]) -> PullRe
     contexts = tuple(
         _context(context) for item in raw_contexts if (context := _object_mapping(item)) is not None
     )
-    check_state, check_diagnostic = classify_all_contexts(contexts, rollup is not None)
+    return CheckEvidence(
+        CheckEvidenceState.OBSERVED if contexts else CheckEvidenceState.EMPTY_ROLLUP,
+        contexts,
+    )
+
+
+def normalize_pull_request(
+    repository: str, raw: Mapping[str, object], evidence: CheckEvidence
+) -> PullRequest:
+    check_state, check_diagnostic = classify_all_contexts(evidence)
     merge_blocked, merge_diagnostic = classify_merge(raw)
     author = raw.get("author")
     number = raw["number"]
@@ -68,7 +87,8 @@ def normalize_pull_request(repository: str, raw: Mapping[str, object]) -> PullRe
         review_decision=str(raw["reviewDecision"]) if raw.get("reviewDecision") else None,
         mergeable=str(raw.get("mergeable") or "UNKNOWN"),
         merge_state_status=str(raw.get("mergeStateStatus") or "UNKNOWN"),
-        contexts=contexts,
+        contexts=evidence.contexts,
+        check_evidence_state=evidence.state,
         all_context_state=check_state,
         required_check_state=RequiredCheckState.UNKNOWN,
         merge_blocked=merge_blocked,
