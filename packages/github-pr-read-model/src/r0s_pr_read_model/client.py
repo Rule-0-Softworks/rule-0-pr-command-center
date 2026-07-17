@@ -89,8 +89,8 @@ class GitHubClient:
                 (location["line"], location["column"])
                 for location in locations
                 if isinstance(location, Mapping)
-                and isinstance(location.get("line"), int)
-                and isinstance(location.get("column"), int)
+                and type(location.get("line")) is int
+                and type(location.get("column")) is int
             )
             if isinstance(locations, list)
             else (),

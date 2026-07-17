@@ -60,3 +60,15 @@ def test_graphql_partial_data_preserves_redacted_issue_metadata() -> None:
     assert result.errors[0].message == "[REDACTED] denied"
     assert result.errors[0].path == ("repository", "pullRequests", "nodes", 0, "commits")
     assert result.errors[0].locations == ((12, 9),)
+
+
+def test_graphql_issue_discards_boolean_location_coordinates() -> None:
+    def opener(request: Request, timeout: float) -> Response:
+        return Response(
+            b'{"data":{},"errors":[{"message":"denied","locations":['
+            b'{"line":true,"column":9},{"line":12,"column":false},{"line":4,"column":2}]}]}'
+        )
+
+    result = GitHubClient("secret-value", opener=opener).graphql("query X { viewer { login } }", {})
+
+    assert result.errors[0].locations == ((4, 2),)
