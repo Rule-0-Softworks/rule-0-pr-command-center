@@ -13,6 +13,15 @@ class CheckState(StrEnum):
     PENDING = "pending"
     NO_CHECKS = "no_checks"
     UNCLASSIFIED = "unclassified"
+    UNKNOWN = "unknown"
+
+
+class CheckEvidenceState(StrEnum):
+    NO_ROLLUP = "no_rollup"
+    EMPTY_ROLLUP = "empty_rollup"
+    OBSERVED = "observed"
+    UNAVAILABLE = "unavailable"
+    INCOMPLETE = "incomplete"
 
 
 class RequiredCheckState(StrEnum):
@@ -45,6 +54,13 @@ class CheckContext:
 
 
 @dataclass(frozen=True)
+class CheckEvidence:
+    state: CheckEvidenceState
+    contexts: tuple[CheckContext, ...]
+    diagnostic: Diagnostic | None = None
+
+
+@dataclass(frozen=True)
 class RequiredCheck:
     context: str
     integration_id: int | None
@@ -66,6 +82,9 @@ class PullRequest:
     mergeable: str
     merge_state_status: str
     contexts: tuple[CheckContext, ...]
+    check_evidence_state: CheckEvidenceState = field(
+        default=CheckEvidenceState.INCOMPLETE, kw_only=True
+    )
     all_context_state: CheckState
     required_check_state: RequiredCheckState
     merge_blocked: bool
@@ -77,6 +96,9 @@ class SourceError:
     repository: str | None
     stage: str
     message: str
+    pull_request_number: int | None = None
+    graphql_path: tuple[str | int, ...] = ()
+    graphql_locations: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)

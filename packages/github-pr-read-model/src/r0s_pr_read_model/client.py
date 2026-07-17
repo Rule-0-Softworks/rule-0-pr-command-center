@@ -4,11 +4,25 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 
 class GitHubError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GraphQLIssue:
+    message: str
+    path: tuple[str | int, ...] = ()
+    locations: tuple[tuple[int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class GraphQLResponse:
+    data: dict[str, Any]
+    errors: tuple[GraphQLIssue, ...] = ()
 
 
 class GitHubClient:
@@ -28,7 +42,7 @@ class GitHubClient:
             url = self._redact(request.full_url)
             raise GitHubError(f"GitHub request failed for {url}: {type(error).__name__}") from error
 
-    def graphql(self, query: str, variables: Mapping[str, object]) -> dict[str, Any]:
+    def graphql(self, query: str, variables: Mapping[str, object]) -> GraphQLResponse:
         body = json.dumps({"query": query, "variables": dict(variables)}).encode()
         request = urllib.request.Request(
             "https://api.github.com/graphql",
@@ -37,12 +51,12 @@ class GitHubClient:
             method="POST",
         )
         result = self._json(request)
-        if result.get("errors"):
-            messages = "; ".join(
-                str(item.get("message", "GraphQL error")) for item in result["errors"]
-            )
-            raise GitHubError(self._redact(messages))
-        return result["data"]
+        issues = tuple(
+            self._graphql_issue(item)
+            for item in result.get("errors", ())
+            if isinstance(item, Mapping)
+        )
+        return GraphQLResponse(dict(result.get("data") or {}), issues)
 
     def rest_json(self, path: str) -> Any:
         request = urllib.request.Request(
@@ -62,3 +76,22 @@ class GitHubClient:
 
     def _redact(self, message: str) -> str:
         return message.replace(self._token, "[REDACTED]")
+
+    def _graphql_issue(self, item: Mapping[str, object]) -> GraphQLIssue:
+        path = item.get("path")
+        locations = item.get("locations")
+        return GraphQLIssue(
+            message=self._redact(str(item.get("message", "GraphQL error"))),
+            path=tuple(value for value in path if isinstance(value, (str, int)))
+            if isinstance(path, list)
+            else (),
+            locations=tuple(
+                (location["line"], location["column"])
+                for location in locations
+                if isinstance(location, Mapping)
+                and isinstance(location.get("line"), int)
+                and isinstance(location.get("column"), int)
+            )
+            if isinstance(locations, list)
+            else (),
+        )
