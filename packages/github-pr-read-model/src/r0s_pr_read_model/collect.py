@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import quote
 
 from .client import GraphQLIssue, GraphQLResponse
@@ -167,7 +167,8 @@ def _collect_check_evidence(
                 )
             )
             return evidence, errors
-        connection = rollup["contexts"]
+        rollup_data = cast(Mapping[str, Any], rollup)
+        connection = cast(Mapping[str, Any], rollup_data["contexts"])
         raw_contexts, has_next, cursor = _connection(connection)
     except (KeyError, TypeError, ValueError, RuntimeError) as error:
         if not errors:
@@ -220,7 +221,10 @@ def _collect_check_evidence(
                 CheckEvidenceState.EMPTY_ROLLUP,
             }:
                 raise ValueError("status check context page was unavailable")
-            page_contexts, has_next, cursor = _connection(rollup["contexts"])
+            rollup_data = cast(Mapping[str, Any], rollup)
+            page_contexts, has_next, cursor = _connection(
+                cast(Mapping[str, Any], rollup_data["contexts"])
+            )
             raw_contexts.extend(page_contexts)
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             if not page_errors:

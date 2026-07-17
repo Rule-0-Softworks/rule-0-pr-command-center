@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 class GitHubError(RuntimeError):
@@ -80,19 +80,25 @@ class GitHubClient:
     def _graphql_issue(self, item: Mapping[str, object]) -> GraphQLIssue:
         path = item.get("path")
         locations = item.get("locations")
+        parsed_path: tuple[str | int, ...] = ()
+        if isinstance(path, list) and all(
+            type(value) is str or type(value) is int for value in path
+        ):
+            parsed_path = cast(tuple[str | int, ...], tuple(path))
+
+        parsed_locations: list[tuple[int, int]] = []
+        if isinstance(locations, list):
+            for location in locations:
+                if not isinstance(location, Mapping):
+                    continue
+                location_data = cast(Mapping[str, object], location)
+                line = location_data.get("line")
+                column = location_data.get("column")
+                if type(line) is int and type(column) is int:
+                    parsed_locations.append((line, column))
+
         return GraphQLIssue(
             message=self._redact(str(item.get("message", "GraphQL error"))),
-            path=tuple(path)
-            if isinstance(path, list)
-            and all(type(value) is str or type(value) is int for value in path)
-            else (),
-            locations=tuple(
-                (location["line"], location["column"])
-                for location in locations
-                if isinstance(location, Mapping)
-                and type(location.get("line")) is int
-                and type(location.get("column")) is int
-            )
-            if isinstance(locations, list)
-            else (),
+            path=parsed_path,
+            locations=tuple(parsed_locations),
         )
