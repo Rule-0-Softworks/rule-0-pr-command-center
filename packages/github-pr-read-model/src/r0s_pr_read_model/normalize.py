@@ -49,14 +49,28 @@ def check_evidence_from_rollup(rollup: object) -> CheckEvidence:
             (),
             Diagnostic("checks.rollup_malformed", "status check rollup was malformed", "rollup"),
         )
-    contexts_connection = rollup.get("contexts") if isinstance(rollup, Mapping) else None
-    raw_context_nodes = (
-        contexts_connection.get("nodes", []) if isinstance(contexts_connection, Mapping) else []
-    )
-    raw_contexts = raw_context_nodes if isinstance(raw_context_nodes, list) else []
-    contexts = tuple(
-        _context(context) for item in raw_contexts if (context := _object_mapping(item)) is not None
-    )
+    contexts_connection = _object_mapping(rollup.get("contexts"))
+    if contexts_connection is None:
+        return CheckEvidence(
+            CheckEvidenceState.UNAVAILABLE,
+            (),
+            Diagnostic("checks.rollup_malformed", "status check rollup was malformed", "rollup"),
+        )
+    raw_context_nodes = contexts_connection.get("nodes")
+    if not isinstance(raw_context_nodes, list):
+        return CheckEvidence(
+            CheckEvidenceState.UNAVAILABLE,
+            (),
+            Diagnostic("checks.rollup_malformed", "status check rollup was malformed", "rollup"),
+        )
+    raw_contexts = tuple(_object_mapping(item) for item in raw_context_nodes)
+    if any(context is None for context in raw_contexts):
+        return CheckEvidence(
+            CheckEvidenceState.UNAVAILABLE,
+            (),
+            Diagnostic("checks.rollup_malformed", "status check rollup was malformed", "rollup"),
+        )
+    contexts = tuple(_context(context) for context in raw_contexts if context is not None)
     return CheckEvidence(
         CheckEvidenceState.OBSERVED if contexts else CheckEvidenceState.EMPTY_ROLLUP,
         contexts,
