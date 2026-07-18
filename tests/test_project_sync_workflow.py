@@ -6,7 +6,7 @@ def test_manual_project_sync_workflow_discovers_and_deduplicates_open_pull_reque
     workflow = (root / ".github" / "workflows" / "sync-open-prs.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in workflow
-    assert 'schedule:\n    - cron: "17 * * * *"' in workflow
+    assert 'schedule:\n    - cron: "45 * * * *"' in workflow
     assert '"/orgs/${owner}/repos?type=all&per_page=100"' in workflow
     assert "select(.archived == false)" in workflow
     assert '"/repos/${owner}/${repository}/pulls?state=open&per_page=100"' in workflow
