@@ -1,0 +1,54 @@
+name: Test R0S PR access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Probe repository and pull request access
+        env:
+          GH_TOKEN: ${{ secrets.R0S_PROJECT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          owner='Rule-0-Softworks'
+          repositories_json="$(
+            gh api \
+              --paginate \
+              --slurp \
+              "/orgs/${owner}/repos?type=all&per_page=100" \
+              2>/dev/null
+          )" || {
+            echo '::error::Unable to enumerate the organization repositories.'
+            exit 1
+          }
+
+          mapfile -t repositories < <(
+            jq -r '.[][] | select(.archived == false) | .name' <<<"${repositories_json}"
+          )
+          open_prs=0
+
+          for repository in "${repositories[@]}"; do
+            pull_requests_json="$(
+              gh api \
+                --paginate \
+                --slurp \
+                "/repos/${owner}/${repository}/pulls?state=open&per_page=100" \
+                2>/dev/null
+            )" || {
+              echo '::error::Unable to query every eligible repository.'
+              exit 1
+            }
+
+            repository_open_prs="$(jq '[.[][]] | length' <<<"${pull_requests_json}")"
+            open_prs=$((open_prs + repository_open_prs))
+          done
+
+          echo "Repositories checked: ${#repositories[@]}"
+          echo "Open PRs found: ${open_prs}"
