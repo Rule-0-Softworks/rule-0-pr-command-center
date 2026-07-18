@@ -25,6 +25,31 @@ FGPAT, so the dashboard marks that check evidence as unavailable or partial
 rather than making an all-clear claim. GitHub App mode supplies full fidelity
 when the app has the necessary repository permissions. For clarity: classic PATs are not supported.
 
+The default `R0S_GITHUB_AUTH_MODE=token` mode uses the fine-grained token from
+`GITHUB_TOKEN` or `GH_TOKEN`. To use a private GitHub App installation instead,
+set these variables in the current PowerShell session:
+
+```powershell
+$env:R0S_GITHUB_AUTH_MODE = "app"
+$env:R0S_GITHUB_APP_CLIENT_ID = "<your GitHub App client ID>"
+$env:R0S_GITHUB_APP_INSTALLATION_ID = "<your installation ID>"
+$env:R0S_GITHUB_APP_PRIVATE_KEY_PATH = "C:\secure\r0s-app.pem"
+```
+
+The App must be private, installed only on the Rule0 repositories it reads, and
+configured with only `administration`, `checks`, `contents`, `metadata`,
+`pull_requests`, and `statuses` at `read` level. `administration: read` supports
+branch-protection and rules reads; `metadata: read` supports organization and
+repository inventory; `statuses: read` supports legacy commit-status contexts
+returned in `statusCheckRollup`.
+The application requests these permissions explicitly when it exchanges the
+App JWT for a short-lived installation token. The production dependency is
+`PyJWT[crypto]`; the application never hand-rolls JWT or RSA signing.
+
+Keep the private key outside the repository and human-managed. The key, App JWT,
+and installation token are never committed, logged, serialized, persisted, or
+included in exceptions.
+
 Install the locked environment and start the local server:
 
 ```powershell
@@ -82,9 +107,9 @@ uv run ruff format --check .
 uv run ty check
 ```
 
-For a credentialed local acceptance check, start the server with a
-human-managed credential and inspect the dashboard and its read-only GET
-endpoints:
+For a credentialed local acceptance check, start the server in token mode or
+App mode with human-managed credentials and inspect the dashboard and its
+read-only GET endpoints:
 
 1. Confirm the dashboard count equals the pull-request count in
    `/api/snapshot`.

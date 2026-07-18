@@ -15,6 +15,7 @@ from r0s_pr_read_model.client import GitHubClient
 from r0s_pr_read_model.collect import collect_snapshot
 from r0s_pr_read_model.models import DashboardSnapshot
 
+from .github_auth import create_token_provider
 from .settings import Settings
 from .snapshot_store import RefreshInProgress, SnapshotStore
 from .views import DashboardFilter, render_dashboard, render_pr_detail
@@ -26,7 +27,7 @@ app = FastAPI()
 def create_app(settings: Settings, store: SnapshotStore | None = None) -> FastAPI:
     """Create the local, read-only dashboard application."""
     if store is None:
-        client = GitHubClient(settings.github_token)
+        client = GitHubClient(create_token_provider(settings))
 
         def collect() -> DashboardSnapshot:
             return collect_snapshot(client, settings.organization, datetime.now(UTC))
