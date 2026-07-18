@@ -1,8 +1,0 @@
-{
-  "pattern": "main",
-  "requiresStatusChecks": true,
-  "requiresStrictStatusChecks": true,
-  "requiredStatusChecks": [
-    {"context": "Quality Gate", "app": {"databaseId": 15368, "slug": "github-actions"}}
-  ]
-}
