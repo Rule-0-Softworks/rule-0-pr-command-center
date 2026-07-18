@@ -12,6 +12,15 @@ def test_readme_documents_security_semantics_and_commands() -> None:
         "Required checks",
         "unknown",
         "read-only",
+        "fine-grained",
+        "GitHub App",
+        "unavailable",
+        "classic PATs are not supported",
+        "R0S_GITHUB_AUTH_MODE",
+        "R0S_GITHUB_APP_CLIENT_ID",
+        "R0S_GITHUB_APP_INSTALLATION_ID",
+        "R0S_GITHUB_APP_PRIVATE_KEY_PATH",
+        "PyJWT[crypto]",
     ):
         assert required in text
 

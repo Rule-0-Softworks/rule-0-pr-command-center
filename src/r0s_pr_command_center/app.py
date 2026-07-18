@@ -15,6 +15,7 @@ from r0s_pr_read_model.client import GitHubClient
 from r0s_pr_read_model.collect import collect_snapshot
 from r0s_pr_read_model.models import DashboardSnapshot
 
+from .github_auth import create_token_provider
 from .settings import Settings
 from .snapshot_store import RefreshInProgress, SnapshotStore
 from .views import DashboardFilter, render_dashboard, render_pr_detail
@@ -26,7 +27,7 @@ app = FastAPI()
 def create_app(settings: Settings, store: SnapshotStore | None = None) -> FastAPI:
     """Create the local, read-only dashboard application."""
     if store is None:
-        client = GitHubClient(settings.github_token)
+        client = GitHubClient(create_token_provider(settings))
 
         def collect() -> DashboardSnapshot:
             return collect_snapshot(client, settings.organization, datetime.now(UTC))
@@ -109,7 +110,14 @@ def serialize_snapshot(snapshot: DashboardSnapshot) -> dict[str, object]:
         "pull_request_count": len(snapshot.pull_requests),
         "is_complete": snapshot.is_complete,
         "source_errors": [
-            {"repository": item.repository, "stage": item.stage, "message": item.message}
+            {
+                "repository": item.repository,
+                "pull_request_number": item.pull_request_number,
+                "stage": item.stage,
+                "message": item.message,
+                "graphql_path": list(item.graphql_path),
+                "graphql_locations": [list(point) for point in item.graphql_locations],
+            }
             for item in snapshot.source_errors
         ],
         "pull_requests": [
@@ -129,6 +137,7 @@ def serialize_snapshot(snapshot: DashboardSnapshot) -> dict[str, object]:
                 "merge_blocked": pr.merge_blocked,
                 "all_context_state": pr.all_context_state.value,
                 "required_check_state": pr.required_check_state.value,
+                "check_evidence_state": pr.check_evidence_state.value,
                 "diagnostics": [
                     {"code": item.code, "message": item.message, "source": item.source}
                     for item in pr.diagnostics

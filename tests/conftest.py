@@ -54,7 +54,16 @@ def snapshot_factory():
             for index, state in enumerate(states)
         )
         errors = (
-            (SourceError("Rule-0-Softworks/denied", "pull_requests", "access denied"),)
+            (
+                SourceError(
+                    "Rule-0-Softworks/denied",
+                    "pull_requests",
+                    "access denied",
+                    pull_request_number=42,
+                    graphql_path=("repository", "pullRequests"),
+                    graphql_locations=((12, 9),),
+                ),
+            )
             if with_source_error
             else ()
         )

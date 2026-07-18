@@ -1,4 +1,7 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
+from r0s_pr_read_model.models import CheckEvidenceState, CheckState
 from starlette.routing import Route
 
 from r0s_pr_command_center.app import create_app
@@ -27,6 +30,32 @@ def test_partial_snapshot_is_visible_in_html_and_json(snapshot_factory) -> None:
         assert client.get("/api/snapshot").json()["is_complete"] is False
 
 
+def test_snapshot_json_exposes_partial_check_evidence(snapshot_factory) -> None:
+    pr = replace(
+        snapshot_factory().pull_requests[0],
+        check_evidence_state=CheckEvidenceState.INCOMPLETE,
+        all_context_state=CheckState.UNKNOWN,
+    )
+    snapshot = replace(snapshot_factory(with_source_error=True), pull_requests=(pr,))
+    app = create_app(Settings("secret"), SnapshotStore(lambda: snapshot))
+
+    with TestClient(app) as client:
+        payload = client.get("/api/snapshot").json()
+
+    assert payload["is_complete"] is False
+    assert payload["pull_requests"][0]["check_evidence_state"] == "incomplete"
+    assert payload["source_errors"] == [
+        {
+            "repository": "Rule-0-Softworks/denied",
+            "pull_request_number": 42,
+            "stage": "pull_requests",
+            "message": "access denied",
+            "graphql_path": ["repository", "pullRequests"],
+            "graphql_locations": [[12, 9]],
+        }
+    ]
+
+
 def test_route_inventory_has_no_github_write_surface(snapshot_factory) -> None:
     snapshot = snapshot_factory()
     app = create_app(Settings("secret"), SnapshotStore(lambda: snapshot))
@@ -39,3 +68,20 @@ def test_route_inventory_has_no_github_write_surface(snapshot_factory) -> None:
     }
     assert {path for path, method in inventory if method == "POST"} == {"/refresh"}
     assert not ({"PUT", "PATCH", "DELETE"} & {method for _, method in inventory})
+
+
+def test_create_app_builds_github_client_from_token_provider(monkeypatch) -> None:
+    settings = Settings("secret")
+    provider = object()
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, token_source) -> None:
+            seen["token_source"] = token_source
+
+    monkeypatch.setattr("r0s_pr_command_center.app.create_token_provider", lambda value: provider)
+    monkeypatch.setattr("r0s_pr_command_center.app.GitHubClient", FakeClient)
+
+    create_app(settings)
+
+    assert seen["token_source"] is provider
