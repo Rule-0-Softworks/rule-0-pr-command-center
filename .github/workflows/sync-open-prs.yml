@@ -1,4 +1,4 @@
-name: Test R0S PR access
+name: Synchronize open PRs with Project 5
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  synchronize:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,6 +18,13 @@ jobs:
           set -euo pipefail
 
           owner='Rule-0-Softworks'
+          project_number=5
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo '::error::Project access token is unavailable.'
+            exit 1
+          fi
+
           repositories_json="$(
             gh api \
               --paginate \
@@ -29,10 +36,76 @@ jobs:
             exit 1
           }
 
+          project_items_query='
+            query($login: String!, $projectNumber: Int!, $endCursor: String) {
+              organization(login: $login) {
+                projectV2(number: $projectNumber) {
+                  id
+                  items(first: 100, after: $endCursor) {
+                    totalCount
+                    nodes {
+                      content {
+                        ... on PullRequest {
+                          id
+                        }
+                      }
+                    }
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                  }
+                }
+              }
+            }
+          '
+          project_items_json="$(
+            gh api graphql \
+              --paginate \
+              --slurp \
+              -f query="${project_items_query}" \
+              -f login="${owner}" \
+              -F projectNumber="${project_number}" \
+              2>/dev/null
+          )" || {
+            echo '::error::Unable to access organization Project #5.'
+            exit 1
+          }
+          project_id="$(
+            jq -er '.[0].data.organization.projectV2.id' <<<"${project_items_json}"
+          )" || {
+            echo '::error::Unable to access organization Project #5.'
+            exit 1
+          }
+          existing_project_items="$(
+            jq -er '.[0].data.organization.projectV2.items.totalCount' <<<"${project_items_json}"
+          )" || {
+            echo '::error::Unable to access organization Project #5.'
+            exit 1
+          }
+
+          declare -A project_pull_request_ids=()
+          while IFS= read -r pull_request_id; do
+            project_pull_request_ids["${pull_request_id}"]=1
+          done < <(
+            jq -r '.[] | .data.organization.projectV2.items.nodes[]? | .content?.id // empty' \
+              <<<"${project_items_json}"
+          )
+
           mapfile -t repositories < <(
             jq -r '.[][] | select(.archived == false) | .name' <<<"${repositories_json}"
           )
           open_prs=0
+          new_items_added=0
+          create_project_item_query='
+            mutation($projectId: ID!, $contentId: ID!) {
+              addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+                item {
+                  id
+                }
+              }
+            }
+          '
 
           for repository in "${repositories[@]}"; do
             pull_requests_json="$(
@@ -46,9 +119,30 @@ jobs:
               exit 1
             }
 
-            repository_open_prs="$(jq '[.[][]] | length' <<<"${pull_requests_json}")"
-            open_prs=$((open_prs + repository_open_prs))
+            mapfile -t pull_request_ids < <(
+              jq -r '.[][] | .node_id' <<<"${pull_requests_json}"
+            )
+            open_prs=$((open_prs + ${#pull_request_ids[@]}))
+
+            for pull_request_id in "${pull_request_ids[@]}"; do
+              if [[ -n "${project_pull_request_ids["${pull_request_id}"]+x}" ]]; then
+                continue
+              fi
+
+              gh api graphql \
+                -f query="${create_project_item_query}" \
+                -f projectId="${project_id}" \
+                -f contentId="${pull_request_id}" \
+                >/dev/null 2>/dev/null || {
+                echo '::error::Unable to add an open pull request to organization Project #5.'
+                exit 1
+              }
+              project_pull_request_ids["${pull_request_id}"]=1
+              new_items_added=$((new_items_added + 1))
+            done
           done
 
           echo "Repositories checked: ${#repositories[@]}"
           echo "Open PRs found: ${open_prs}"
+          echo "Existing Project items checked: ${existing_project_items}"
+          echo "New items added: ${new_items_added}"
