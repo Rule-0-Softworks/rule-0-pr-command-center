@@ -22,6 +22,7 @@ INSTALLATION_PERMISSIONS = {
     "contents": "read",
     "metadata": "read",
     "pull_requests": "read",
+    "statuses": "read",
 }
 
 

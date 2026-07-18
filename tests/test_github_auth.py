@@ -61,6 +61,7 @@ def success_body(expires_at: datetime = FIXED_NOW + timedelta(hours=1)) -> bytes
                 "contents": "read",
                 "metadata": "read",
                 "pull_requests": "read",
+                "statuses": "read",
             },
         }
     ).encode()
@@ -92,6 +93,7 @@ def test_app_provider_requests_and_caches_installation_token(tmp_path: Path) -> 
             "contents": "read",
             "metadata": "read",
             "pull_requests": "read",
+            "statuses": "read",
         }
     }
     assert "installation-secret" not in repr(provider)

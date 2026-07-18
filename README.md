@@ -37,9 +37,11 @@ $env:R0S_GITHUB_APP_PRIVATE_KEY_PATH = "C:\secure\r0s-app.pem"
 ```
 
 The App must be private, installed only on the Rule0 repositories it reads, and
-configured with only `administration`, `checks`, `contents`, `metadata`, and
-`pull_requests` at `read` level. `administration: read` supports branch-protection
-and rules reads; `metadata: read` supports organization and repository inventory.
+configured with only `administration`, `checks`, `contents`, `metadata`,
+`pull_requests`, and `statuses` at `read` level. `administration: read` supports
+branch-protection and rules reads; `metadata: read` supports organization and
+repository inventory; `statuses: read` supports legacy commit-status contexts
+returned in `statusCheckRollup`.
 The application requests these permissions explicitly when it exchanges the
 App JWT for a short-lived installation token. The production dependency is
 `PyJWT[crypto]`; the application never hand-rolls JWT or RSA signing.
