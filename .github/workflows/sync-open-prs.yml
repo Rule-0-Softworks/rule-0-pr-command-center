@@ -2,7 +2,7 @@ name: Synchronize open PRs with Project 5
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "45 * * * *"
   workflow_dispatch:
 
 permissions:
